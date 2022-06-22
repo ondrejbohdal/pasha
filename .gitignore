@@ -1,0 +1,8 @@
+.DS_Store
+.coverage
+.pytest_cache/
+*__pycache__
+*.egg-info
+.idea
+experiment_results/
+*.out
