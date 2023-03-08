@@ -33,51 +33,50 @@ supports:
 * Bayesian optimization with Gaussian processes [`searcher=bayesopt`]
 
 Here is a launcher script using `FIFOScheduler`:
+
 ```python
 import logging
 
-from syne_tune.backend.local_backend import LocalBackend
-from syne_tune.optimizer.schedulers.fifo import FIFOScheduler
-from syne_tune.tuner import Tuner
-from syne_tune.stopping_criterion import StoppingCriterion
+from syne_tune.backend import LocalBackend
+from syne_tune.optimizer.schedulers import FIFOScheduler
+from syne_tune import Tuner, StoppingCriterion
 
-from examples.training_scripts.mlp_on_fashion_mnist.mlp_on_fashion_mnist import \
+from benchmarking.definitions.definition_mlp_on_fashion_mnist import \
     mlp_fashionmnist_benchmark
 
-
 if __name__ == '__main__':
-    logging.getLogger().setLevel(logging.DEBUG)
-    n_workers = 4
+  logging.getLogger().setLevel(logging.DEBUG)
+  n_workers = 4
 
-    # We pick the MLP on FashionMNIST benchmark
-    # The 'benchmark' dict contains arguments needed by scheduler and
-    # searcher (e.g., 'mode', 'metric'), along with suggested default values
-    # for other arguments (which you are free to override)
-    benchmark = mlp_fashionmnist_benchmark({'dataset_path': './'})
-    config_space = benchmark['config_space']
+  # We pick the MLP on FashionMNIST benchmark
+  # The 'benchmark' dict contains arguments needed by scheduler and
+  # searcher (e.g., 'mode', 'metric'), along with suggested default values
+  # for other arguments (which you are free to override)
+  benchmark = mlp_fashionmnist_benchmark({'dataset_path': './'})
+  config_space = benchmark['config_space']
 
-    backend = LocalBackend(entry_point=benchmark['script'])
+  backend = LocalBackend(entry_point=benchmark['script'])
 
-    # GP-based Bayesian optimization searcher. Many options can be specified
-    # via `search_options`, but let's use the defaults
-    searcher = 'bayesopt'
-    search_options = {'num_init_random': n_workers + 2}
-    # FIFOScheduler. Together with searcher `bayesopt`, this selects Bayesian
-    # optimization without early stopping.
-    scheduler = FIFOScheduler(
-        config_space,
-        searcher=searcher,
-        search_options=search_options,
-        mode=benchmark['mode'],
-        metric=benchmark['metric'])
+  # GP-based Bayesian optimization searcher. Many options can be specified
+  # via `search_options`, but let's use the defaults
+  searcher = 'bayesopt'
+  search_options = {'num_init_random': n_workers + 2}
+  # FIFOScheduler. Together with searcher `bayesopt`, this selects Bayesian
+  # optimization without early stopping.
+  scheduler = FIFOScheduler(
+    config_space,
+    searcher=searcher,
+    search_options=search_options,
+    mode=benchmark['mode'],
+    metric=benchmark['metric'])
 
-    tuner = Tuner(
-        backend=backend,
-        scheduler=scheduler,
-        stop_criterion=StoppingCriterion(max_wallclock_time=120),
-        n_workers=n_workers)
+  tuner = Tuner(
+    trial_backend=backend,
+    scheduler=scheduler,
+    stop_criterion=StoppingCriterion(max_wallclock_time=120),
+    n_workers=n_workers)
 
-    tuner.run()
+  tuner.run()
 ```
 
 What happens in this launcher script?
@@ -137,17 +136,17 @@ The simplest HPO baseline is **random search**, which you obtain with
 configuration is chosen by sampling attribute values at random, from
 distributions specified in `config_space`:
 
-* `search_space.uniform(lower, upper)`: Real-valued uniform in `[lower, upper]`
-* `search_space.loguniform(lower, upper)`: Real-valued log-uniform in
+* `config_space.uniform(lower, upper)`: Real-valued uniform in `[lower, upper]`
+* `config_space.loguniform(lower, upper)`: Real-valued log-uniform in
   `[lower, upper]`. More precisely, the value is `exp(x)`, where `x` is drawn
   uniformly in `[log(lower), log(upper)]`
-* `search_space.randint(lower, upper)`: Integer uniform in `lower, ..., upper`.
+* `config_space.randint(lower, upper)`: Integer uniform in `lower, ..., upper`.
   The value range includes both `lower` and `upper` (difference to Python range
   convention)
-* `search_space.lograndint(lower, upper)`: Integer log-uniform in
+* `config_space.lograndint(lower, upper)`: Integer log-uniform in
   `lower, ..., upper`. More precisely, the value is `int(round(exp(x)))`, where
   `x` is drawn uniformly in `[log(lower - 0.5), log(upper + 0.5)]`
-* `search_space.choice(categories)`: Uniform from the finite list `categories`
+* `config_space.choice(categories)`: Uniform from the finite list `categories`
   of `str` values
 
 If `points_to_evaluate` is specified, configurations are first taken from this
@@ -224,58 +223,57 @@ far, asynchronous successive halving does not profit from multiple brackets if
 applied to neural network tuning.
 
 Here is a launcher script using `HyperbandScheduler`:
+
 ```python
 import logging
 
-from syne_tune.backend.local_backend import LocalBackend
-from syne_tune.optimizer.schedulers.hyperband import HyperbandScheduler
-from syne_tune.tuner import Tuner
-from syne_tune.stopping_criterion import StoppingCriterion
+from syne_tune.backend import LocalBackend
+from syne_tune.optimizer.schedulers import HyperbandScheduler
+from syne_tune import Tuner, StoppingCriterion
 
-from examples.training_scripts.mlp_on_fashion_mnist.mlp_on_fashion_mnist import \
+from benchmarking.definitions.definition_mlp_on_fashion_mnist import \
     mlp_fashionmnist_benchmark
 
-
 if __name__ == '__main__':
-    logging.getLogger().setLevel(logging.DEBUG)
-    n_workers = 4
+  logging.getLogger().setLevel(logging.DEBUG)
+  n_workers = 4
 
-    # We pick the MLP on FashionMNIST benchmark
-    # The 'benchmark' dict contains arguments needed by scheduler and
-    # searcher (e.g., 'mode', 'metric'), along with suggested default values
-    # for other arguments (which you are free to override)
-    benchmark = mlp_fashionmnist_benchmark({'dataset_path': './'})
-    config_space = benchmark['config_space']
+  # We pick the MLP on FashionMNIST benchmark
+  # The 'benchmark' dict contains arguments needed by scheduler and
+  # searcher (e.g., 'mode', 'metric'), along with suggested default values
+  # for other arguments (which you are free to override)
+  benchmark = mlp_fashionmnist_benchmark({'dataset_path': './'})
+  config_space = benchmark['config_space']
 
-    backend = LocalBackend(entry_point=benchmark['script'])
+  backend = LocalBackend(entry_point=benchmark['script'])
 
-    # GP-based Bayesian optimization searcher. Many options can be specified
-    # via `search_options`, but let's use the defaults
-    searcher = 'bayesopt'
-    search_options = {'num_init_random': n_workers + 2}
-    # Hyperband (or successive halving) scheduler of the stopping type.
-    # Together with 'bayesopt', this selects the MOBSTER algorithm.
-    default_params = benchmark['default_params']
-    scheduler = HyperbandScheduler(
-        config_space,
-        searcher=searcher,
-        search_options=search_options,
-        type='stopping',
-        max_t=default_params['epochs'],
-        grace_period=default_params['grace_period'],
-        reduction_factor=default_params['reduction_factor'],
-        resource_attr=benchmark['resource_attr'],
-        mode=benchmark['mode'],
-        metric=benchmark['metric'])
+  # GP-based Bayesian optimization searcher. Many options can be specified
+  # via `search_options`, but let's use the defaults
+  searcher = 'bayesopt'
+  search_options = {'num_init_random': n_workers + 2}
+  # Hyperband (or successive halving) scheduler of the stopping type.
+  # Together with 'bayesopt', this selects the MOBSTER algorithm.
+  default_params = benchmark['default_params']
+  scheduler = HyperbandScheduler(
+    config_space,
+    searcher=searcher,
+    search_options=search_options,
+    type='stopping',
+    max_t=default_params['epochs'],
+    grace_period=default_params['grace_period'],
+    reduction_factor=default_params['reduction_factor'],
+    resource_attr=benchmark['resource_attr'],
+    mode=benchmark['mode'],
+    metric=benchmark['metric'])
 
-    tuner = Tuner(
-        backend=backend,
-        scheduler=scheduler,
-        stop_criterion=StoppingCriterion(max_wallclock_time=120),
-        n_workers=n_workers,
-    )
+  tuner = Tuner(
+    trial_backend=backend,
+    scheduler=scheduler,
+    stop_criterion=StoppingCriterion(max_wallclock_time=120),
+    n_workers=n_workers,
+  )
 
-    tuner.run()
+  tuner.run()
 ```
 
 Much of this launcher script is the same as for `FIFOScheduler`, but
@@ -320,7 +318,7 @@ above, the rung levels would be 1, 3, 9, 27, 56.
 If `max_t` is not given as argument to `HyperbandScheduler`, the value may be
 inferred from `config_space`. Namely, `config_space['epochs']`,
 `config_space['max-t']`, `config_space['max-epochs']` are checked in this order.
-In the example above, `configspace['epochs']` contains the correct value, so we
+In the example above, `config_space['epochs']` contains the correct value, so we
 could have dropped `max_t`.
 
 Given such a rung level spacing, stop/go decisions are done by comparing

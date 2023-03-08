@@ -21,15 +21,17 @@ import numpy as np
 
 from sagemaker.mxnet import MXNet
 
-from syne_tune.backend.local_backend import LocalBackend
-from syne_tune.backend.sagemaker_backend.sagemaker_backend import SagemakerBackend
-from syne_tune.backend.sagemaker_backend.sagemaker_utils import get_execution_role
+from syne_tune.backend import LocalBackend, SageMakerBackend
+from syne_tune.backend.sagemaker_backend.sagemaker_utils import (
+    get_execution_role,
+    default_sagemaker_session,
+)
 from syne_tune.optimizer.baselines import ASHA
-from syne_tune.tuner import Tuner
-from syne_tune.search_space import loguniform, lograndint
+from syne_tune import Tuner, StoppingCriterion
+from syne_tune.config_space import loguniform, lograndint
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
 
     logging.getLogger().setLevel(logging.INFO)
     np.random.seed(0)
@@ -46,13 +48,15 @@ if __name__ == '__main__':
 
     mode = "min"
     metric = "mean_wQuantileLoss"
-    entry_point = Path(__file__).parent / "training_scripts" / "gluonts" / "train_gluonts.py"
+    entry_point = (
+        Path(__file__).parent / "training_scripts" / "gluonts" / "train_gluonts.py"
+    )
 
     evaluate_trials_on_sagemaker = False
 
     if evaluate_trials_on_sagemaker:
         # evaluate trials on Sagemaker
-        backend = SagemakerBackend(
+        trial_backend = SageMakerBackend(
             sm_estimator=MXNet(
                 entry_point=entry_point.name,
                 source_dir=str(entry_point.parent),
@@ -60,36 +64,35 @@ if __name__ == '__main__':
                 instance_count=1,
                 role=get_execution_role(),
                 max_run=10 * 60,
-                framework_version='1.7',
-                py_version='py3',
-                base_job_name='hpo-gluonts',
+                framework_version="1.7",
+                py_version="py3",
+                base_job_name="hpo-gluonts",
+                sagemaker_session=default_sagemaker_session(),
             ),
             # names of metrics to track. Each metric will be detected by Sagemaker if it is written in the
             # following form: "[RMSE]: 1.2", see in train_main_example how metrics are logged for an example
             metrics_names=[metric],
         )
     else:
-        # evaluate trials locally, replace with SagemakerBackend to evaluate trials on Sagemaker
-        backend = LocalBackend(entry_point=str(entry_point))
+        # evaluate trials locally, replace with SageMakerBackend to evaluate trials on Sagemaker
+        trial_backend = LocalBackend(entry_point=str(entry_point))
 
     # see examples to see other schedulers, mobster, Raytune, multiobjective, etc...
     scheduler = ASHA(
-        config_space,
-        max_t=epochs,
-        resource_attr='epoch_no',
-        mode='min',
-        metric=metric
+        config_space, max_t=epochs, resource_attr="epoch_no", mode="min", metric=metric
     )
 
-    wallclock_time_budget = 3600 if evaluate_trials_on_sagemaker else 60
+    wallclock_time_budget = 3600 if evaluate_trials_on_sagemaker else 600
     dollar_cost_budget = 20.0
 
     tuner = Tuner(
-        backend=backend,
+        trial_backend=trial_backend,
         scheduler=scheduler,
         # stops if wallclock time or dollar-cost exceeds budget,
         # dollar-cost is only available when running on Sagemaker
-        stop_criterion=lambda status: status.wallclock_time > wallclock_time_budget or status.cost > dollar_cost_budget,
+        stop_criterion=StoppingCriterion(
+            max_wallclock_time=wallclock_time_budget, max_cost=dollar_cost_budget
+        ),
         n_workers=4,
         # some failures may happen when SGD diverges with NaNs
         max_failures=10,

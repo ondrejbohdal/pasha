@@ -12,8 +12,7 @@
 # permissions and limitations under the License.
 import logging
 
-from syne_tune.optimizer.schedulers.hyperband_promotion import \
-    PromotionRungSystem
+from syne_tune.optimizer.schedulers.hyperband_promotion import PromotionRungSystem
 
 logger = logging.getLogger(__name__)
 
@@ -49,40 +48,55 @@ class CostPromotionRungSystem(PromotionRungSystem):
     up. See :class:`HyperbandScheduler` for how this works.
 
     """
-    def __init__(self, rung_levels, promote_quantiles, metric, mode,
-                 resource_attr, cost_attr, max_t):
+
+    def __init__(
+        self,
+        rung_levels,
+        promote_quantiles,
+        metric,
+        mode,
+        resource_attr,
+        cost_attr,
+        max_t,
+    ):
         super().__init__(
-            rung_levels, promote_quantiles, metric, mode, resource_attr, max_t)
+            rung_levels, promote_quantiles, metric, mode, resource_attr, max_t
+        )
         self._cost_attr = cost_attr
         # Note: The data entry in _rungs is now a dict mapping trial_id to
         # (metric_value, cost_value, was_promoted), where metric_value is
         # m(x, r), cost value is c(x, r).
 
-    def _find_promotable_config(self, recorded, prom_quant, trial_id=None):
+    def _find_promotable_trial(self, recorded, prom_quant, resource):
         """
         Check whether any not yet promoted entry in `recorded` is
         promotable (see header comment). If there are several such, the one
         with the best value is chosen.
-        If `trial_id` is given, only this single entry is tested.
 
         :param recorded: Dict to scan
         :param prom_quant: Quantile for promotion
-        :param trial_id: See above
+        :param resource: Amount of resources spent on the rung.
         :return: trial_id if found, otherwise None
         """
-        assert trial_id is None, \
-            "Version with trial_id not None is not implemented"
         ret_id = None
         if len(recorded) > 1:
-            sign = 2 * (self._mode == 'min') - 1
+            sign = 2 * (self._mode == "min") - 1
             # Sort best-first
-            sorted_record = sorted(((k, ) + v for k, v in recorded.items()),
-                                   key=lambda x: x[1] * sign)
+            sorted_record = sorted(
+                ((k,) + v for k, v in recorded.items()), key=lambda x: x[1] * sign
+            )
             cost_threshold = sum(x[2] for x in sorted_record) * prom_quant
             sum_costs = 0
             # DEBUG
-            log_msg = f"q = {prom_quant:.2f}, threshold = {cost_threshold:.2f}\n" +\
-                ", ".join([f"{x[0]}:{x[2]:.2f}({x[1]:.3f},{int(x[3])})" for x in sorted_record])
+            log_msg = (
+                f"q = {prom_quant:.2f}, threshold = {cost_threshold:.2f}\n"
+                + ", ".join(
+                    [
+                        f"{x[0]}:{x[2]:.2f}({x[1]:.3f},{int(x[3])})"
+                        for x in sorted_record
+                    ]
+                )
+            )
             for id, _, cost, was_promoted in sorted_record:
                 sum_costs += cost
                 if sum_costs > cost_threshold:

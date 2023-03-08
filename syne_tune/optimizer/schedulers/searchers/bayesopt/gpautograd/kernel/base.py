@@ -12,30 +12,39 @@
 # permissions and limitations under the License.
 import autograd.numpy as anp
 from autograd.tracer import getval
-from abc import abstractmethod
 
-from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.constants \
-    import INITIAL_COVARIANCE_SCALE, INITIAL_INVERSE_BANDWIDTHS, \
-    DEFAULT_ENCODING, INVERSE_BANDWIDTHS_LOWER_BOUND, \
-    INVERSE_BANDWIDTHS_UPPER_BOUND, COVARIANCE_SCALE_LOWER_BOUND, \
-    COVARIANCE_SCALE_UPPER_BOUND, NUMERICAL_JITTER
-from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.distribution \
-    import Uniform, LogNormal
-from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.gluon \
-    import Block
-from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.gluon_blocks_helpers \
-    import encode_unwrap_parameter, register_parameter, create_encoding
-from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.mean \
-    import MeanFunction
+from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.constants import (
+    INITIAL_COVARIANCE_SCALE,
+    INITIAL_INVERSE_BANDWIDTHS,
+    DEFAULT_ENCODING,
+    INVERSE_BANDWIDTHS_LOWER_BOUND,
+    INVERSE_BANDWIDTHS_UPPER_BOUND,
+    COVARIANCE_SCALE_LOWER_BOUND,
+    COVARIANCE_SCALE_UPPER_BOUND,
+    NUMERICAL_JITTER,
+)
+from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.distribution import (
+    Uniform,
+    LogNormal,
+)
+from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.gluon import Block
+from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.gluon_blocks_helpers import (
+    encode_unwrap_parameter,
+    register_parameter,
+    create_encoding,
+)
+from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.mean import (
+    MeanFunction,
+)
 
-__all__ = ['KernelFunction',
-           'Matern52']
+__all__ = ["KernelFunction", "Matern52"]
 
 
 class KernelFunction(MeanFunction):
     """
     Base class of kernel (or covariance) functions
     """
+
     def __init__(self, dimension: int, **kwargs):
         """
         :param dimension: Dimensionality of input points after encoding into
@@ -51,22 +60,20 @@ class KernelFunction(MeanFunction):
         """
         return self._dimension
 
-    @abstractmethod
     def diagonal(self, X):
         """
         :param X: Input data, shape (n, d)
         :return: Diagonal of K(X, X), shape (n,)
         """
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
     def diagonal_depends_on_X(self):
         """
         For stationary kernels, diagonal does not depend on X
 
         :return: Does diagonal(X) depend on X?
         """
-        pass
+        raise NotImplementedError
 
     def _check_input_shape(self, X):
         return anp.reshape(X, (getval(X.shape[0]), self._dimension))
@@ -87,25 +94,30 @@ class SquaredDistance(Block):
     d components (with d=dimension, i.e., the number of features in X)
     otherwise, inverse_bandwidths is (1,d)
     """
+
     def __init__(self, dimension, ARD=False, encoding_type=DEFAULT_ENCODING, **kwargs):
         super().__init__(**kwargs)
         self.ARD = ARD
         inverse_bandwidths_dimension = 1 if not ARD else dimension
         self.encoding = create_encoding(
-            encoding_type, INITIAL_INVERSE_BANDWIDTHS,
-            INVERSE_BANDWIDTHS_LOWER_BOUND, INVERSE_BANDWIDTHS_UPPER_BOUND,
+            encoding_type,
+            INITIAL_INVERSE_BANDWIDTHS,
+            INVERSE_BANDWIDTHS_LOWER_BOUND,
+            INVERSE_BANDWIDTHS_UPPER_BOUND,
             inverse_bandwidths_dimension,
-            Uniform(INVERSE_BANDWIDTHS_LOWER_BOUND,
-                    INVERSE_BANDWIDTHS_UPPER_BOUND))
-        
+            Uniform(INVERSE_BANDWIDTHS_LOWER_BOUND, INVERSE_BANDWIDTHS_UPPER_BOUND),
+        )
+
         with self.name_scope():
             self.inverse_bandwidths_internal = register_parameter(
-                self.params, 'inverse_bandwidths', self.encoding,
-                shape=(inverse_bandwidths_dimension,))
+                self.params,
+                "inverse_bandwidths",
+                self.encoding,
+                shape=(inverse_bandwidths_dimension,),
+            )
 
     def _inverse_bandwidths(self):
-        return encode_unwrap_parameter(
-            self.inverse_bandwidths_internal, self.encoding)
+        return encode_unwrap_parameter(self.inverse_bandwidths_internal, self.encoding)
 
     def forward(self, X1, X2):
         """
@@ -113,7 +125,6 @@ class SquaredDistance(Block):
 
         :param X1: input data of size (n1,d)
         :param X2: input data of size (n2,d)
-        :param inverse_bandwidths_internal: self.inverse_bandwidths_internal
         """
         # In case inverse_bandwidths if of size (1, dimension), dimension>1,
         # ARD is handled by broadcasting
@@ -130,8 +141,7 @@ class SquaredDistance(Block):
             X2_scaled = anp.multiply(X2, inverse_bandwidths)
             X1_squared_norm = anp.sum(anp.square(X1_scaled), axis=1)
             X2_squared_norm = anp.sum(anp.square(X2_scaled), axis=1)
-            D = -2.0 * anp.matmul(
-                X1_scaled, anp.transpose(X2_scaled))
+            D = -2.0 * anp.matmul(X1_scaled, anp.transpose(X2_scaled))
             D = D + anp.reshape(X1_squared_norm, (-1, 1))
             D = D + anp.reshape(X2_squared_norm, (1, -1))
 
@@ -144,23 +154,26 @@ class SquaredDistance(Block):
         """
         inverse_bandwidths = anp.reshape(self._inverse_bandwidths(), (-1,))
         if inverse_bandwidths.size == 1:
-            return {'inv_bw': inverse_bandwidths[0]}
+            return {"inv_bw": inverse_bandwidths[0]}
         else:
             return {
-                'inv_bw{}'.format(k): inverse_bandwidths[k]
-                for k in range(inverse_bandwidths.size)}
+                "inv_bw{}".format(k): inverse_bandwidths[k]
+                for k in range(inverse_bandwidths.size)
+            }
 
     def set_params(self, param_dict):
         dimension = self.encoding.dimension
         if dimension == 1:
-            inverse_bandwidths = [param_dict['inv_bw']]
+            inverse_bandwidths = [param_dict["inv_bw"]]
         else:
-            keys = ['inv_bw{}'.format(k) for k in range(dimension)]
+            keys = ["inv_bw{}".format(k) for k in range(dimension)]
             for k in keys:
-                assert k in param_dict, "'{}' not in param_dict = {}".format(k, param_dict)
+                assert k in param_dict, "'{}' not in param_dict = {}".format(
+                    k, param_dict
+                )
             inverse_bandwidths = [param_dict[k] for k in keys]
         self.encoding.set(self.inverse_bandwidths_internal, inverse_bandwidths)
-        
+
 
 class Matern52(KernelFunction):
     """
@@ -175,30 +188,46 @@ class Matern52(KernelFunction):
     d components (with d=dimension, i.e., the number of features in X)
     otherwise (ARD == True), inverse_bandwidths is (1,d)
     """
-    def __init__(self, dimension, ARD=False, encoding_type=DEFAULT_ENCODING,
-                 **kwargs):
+
+    def __init__(
+        self,
+        dimension,
+        ARD=False,
+        encoding_type=DEFAULT_ENCODING,
+        has_covariance_scale=True,
+        **kwargs
+    ):
         super(Matern52, self).__init__(dimension, **kwargs)
-        self.encoding = create_encoding(
-            encoding_type, INITIAL_COVARIANCE_SCALE,
-            COVARIANCE_SCALE_LOWER_BOUND, COVARIANCE_SCALE_UPPER_BOUND, 1,
-            LogNormal(0.0, 1.0))
         self.ARD = ARD
+        self.has_covariance_scale = has_covariance_scale
         self.squared_distance = SquaredDistance(
-            dimension=dimension, ARD=ARD, encoding_type=encoding_type)
-            
-        with self.name_scope():
-            self.covariance_scale_internal = register_parameter(
-                self.params, 'covariance_scale', self.encoding)
+            dimension=dimension, ARD=ARD, encoding_type=encoding_type
+        )
+        if has_covariance_scale:
+            self.encoding = create_encoding(
+                encoding_name=encoding_type,
+                init_val=INITIAL_COVARIANCE_SCALE,
+                constr_lower=COVARIANCE_SCALE_LOWER_BOUND,
+                constr_upper=COVARIANCE_SCALE_UPPER_BOUND,
+                dimension=1,
+                prior=LogNormal(0.0, 1.0),
+            )
+            with self.name_scope():
+                self.covariance_scale_internal = register_parameter(
+                    self.params, "covariance_scale", self.encoding
+                )
 
     def _covariance_scale(self):
-        return encode_unwrap_parameter(
-            self.covariance_scale_internal, self.encoding)
+        if self.has_covariance_scale:
+            return encode_unwrap_parameter(
+                self.covariance_scale_internal, self.encoding
+            )
+        else:
+            return 1.0
 
     def forward(self, X1, X2):
         """
         Actual computation of the Matern52 kernel matrix (see details above)
-        See http://www.gaussianprocess.org/gpml/chapters/RW.pdf,
-        equation (4.17)
 
         :param X1: input data of size (n1, d)
         :param X2: input data of size (n2, d)
@@ -212,8 +241,7 @@ class Matern52(KernelFunction):
         # (non-differentiability)
         # that's why we add NUMERICAL_JITTER
         B = anp.sqrt(5.0 * D + NUMERICAL_JITTER)
-        K = anp.multiply(
-            (1.0 + B + 5.0 / 3.0 * D) * anp.exp(-B), covariance_scale)
+        K = anp.multiply((1.0 + B + 5.0 / 3.0 * D) * anp.exp(-B), covariance_scale)
 
         return K
 
@@ -221,31 +249,42 @@ class Matern52(KernelFunction):
         X = self._check_input_shape(X)
         covariance_scale = self._covariance_scale()
         covariance_scale_times_ones = anp.multiply(
-            anp.ones((getval(X.shape[0]), 1)), covariance_scale)
-        
+            anp.ones((getval(X.shape[0]), 1)), covariance_scale
+        )
+
         return anp.reshape(covariance_scale_times_ones, (-1,))
 
     def diagonal_depends_on_X(self):
         return False
 
     def param_encoding_pairs(self):
-        return [
-            (self.covariance_scale_internal, self.encoding),
-            (self.squared_distance.inverse_bandwidths_internal,
-             self.squared_distance.encoding)
+        result = [
+            (
+                self.squared_distance.inverse_bandwidths_internal,
+                self.squared_distance.encoding,
+            )
         ]
-        
+        if self.has_covariance_scale:
+            result.insert(0, (self.covariance_scale_internal, self.encoding))
+        return result
+
     def get_covariance_scale(self):
-        return self._covariance_scale()[0]
+        if self.has_covariance_scale:
+            return self._covariance_scale()[0]
+        else:
+            return 1.0
 
     def set_covariance_scale(self, covariance_scale):
+        assert self.has_covariance_scale, "covariance_scale is fixed to 1"
         self.encoding.set(self.covariance_scale_internal, covariance_scale)
 
     def get_params(self):
         result = self.squared_distance.get_params()
-        result['covariance_scale'] = self.get_covariance_scale()
+        if self.has_covariance_scale:
+            result["covariance_scale"] = self.get_covariance_scale()
         return result
 
     def set_params(self, param_dict):
         self.squared_distance.set_params(param_dict)
-        self.set_covariance_scale(param_dict['covariance_scale'])
+        if self.has_covariance_scale:
+            self.set_covariance_scale(param_dict["covariance_scale"])

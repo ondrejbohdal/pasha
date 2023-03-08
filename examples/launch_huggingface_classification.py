@@ -19,18 +19,22 @@ from pathlib import Path
 from sagemaker.huggingface import HuggingFace
 
 import syne_tune
-from syne_tune.backend.sagemaker_backend.sagemaker_backend import SagemakerBackend
-from syne_tune.backend.sagemaker_backend.sagemaker_utils import get_execution_role
+from syne_tune.backend import SageMakerBackend
+from syne_tune.backend.sagemaker_backend.sagemaker_utils import (
+    get_execution_role,
+    default_sagemaker_session,
+)
 from syne_tune.optimizer.baselines import RandomSearch
-from syne_tune.tuner import Tuner
-from syne_tune.stopping_criterion import StoppingCriterion
+from syne_tune import Tuner, StoppingCriterion
 
-from benchmarking.definitions.definition_distilbert_on_imdb import \
-    distilbert_imdb_benchmark, distilbert_imdb_default_params
+from benchmarking.definitions.definition_distilbert_on_imdb import (
+    distilbert_imdb_benchmark,
+    distilbert_imdb_default_params,
+)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
-    
+
     # We pick the DistilBERT on IMDB benchmark
     # The 'benchmark' dict contains arguments needed by scheduler and
     # searcher (e.g., 'mode', 'metric'), along with suggested default values
@@ -39,41 +43,39 @@ if __name__ == '__main__':
     n_workers = 4
     default_params = distilbert_imdb_default_params()
     benchmark = distilbert_imdb_benchmark(default_params)
-    mode = benchmark['mode']
-    metric = benchmark['metric']
-    config_space = benchmark['config_space']
+    mode = benchmark["mode"]
+    metric = benchmark["metric"]
+    config_space = benchmark["config_space"]
 
     # Define Hugging Face SageMaker estimator
     root = Path(syne_tune.__path__[0]).parent
     huggingface_estimator = HuggingFace(
-        entry_point=benchmark['script'],
-        base_job_name='hpo-transformer',
-        instance_type=default_params['instance_type'],
+        entry_point=benchmark["script"],
+        base_job_name="hpo-transformer",
+        instance_type=default_params["instance_type"],
         instance_count=1,
-        transformers_version='4.4',
-        pytorch_version='1.6',
-        py_version='py36',
+        transformers_version="4.4",
+        pytorch_version="1.6",
+        py_version="py36",
         role=get_execution_role(),
         dependencies=[root / "benchmarking"],
+        sagemaker_session=default_sagemaker_session(),
     )
 
     # SageMaker backend
-    backend = SagemakerBackend(
+    trial_backend = SageMakerBackend(
         sm_estimator=huggingface_estimator,
         metrics_names=[metric],
     )
 
     # Random search without stopping
     scheduler = RandomSearch(
-        config_space,
-        mode=mode,
-        metric=metric,
-        random_seed=random_seed
+        config_space, mode=mode, metric=metric, random_seed=random_seed
     )
 
     stop_criterion = StoppingCriterion(max_wallclock_time=3600)
     tuner = Tuner(
-        backend=backend,
+        trial_backend=trial_backend,
         scheduler=scheduler,
         stop_criterion=stop_criterion,
         n_workers=n_workers,

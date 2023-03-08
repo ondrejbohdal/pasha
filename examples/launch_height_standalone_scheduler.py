@@ -19,19 +19,22 @@ from typing import Optional, Dict, List
 
 import numpy as np
 
-from syne_tune.backend.local_backend import LocalBackend
+from syne_tune.backend import LocalBackend
 from syne_tune.backend.trial_status import Trial
-from syne_tune.optimizer.scheduler import TrialScheduler, \
-    SchedulerDecision, TrialSuggestion
-from syne_tune.tuner import Tuner
-from syne_tune.search_space import randint
-from syne_tune.stopping_criterion import StoppingCriterion
+from syne_tune.optimizer.scheduler import (
+    TrialScheduler,
+    SchedulerDecision,
+    TrialSuggestion,
+)
+from syne_tune import Tuner, StoppingCriterion
+from syne_tune.config_space import randint
 
 
 class SimpleScheduler(TrialScheduler):
-    def __init__(self, config_space: Dict, metric: str):
+    def __init__(self, config_space: Dict, metric: str, mode: Optional[str] = None):
         super(SimpleScheduler, self).__init__(config_space=config_space)
         self.metric = metric
+        self.mode = mode if mode is not None else "min"
         self.sorted_results = []
 
     def _suggest(self, trial_id: int) -> Optional[TrialSuggestion]:
@@ -55,6 +58,9 @@ class SimpleScheduler(TrialScheduler):
         self.sorted_results = np.insert(self.sorted_results, index, new_metric)
         normalized_rank = index / float(len(self.sorted_results))
 
+        if self.mode == "max":
+            normalized_rank = 1 - normalized_rank
+
         if normalized_rank < 0.8:
             return SchedulerDecision.CONTINUE
         else:
@@ -68,7 +74,7 @@ class SimpleScheduler(TrialScheduler):
         return [self.metric]
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     logging.getLogger().setLevel(logging.DEBUG)
 
     random_seed = 31415927
@@ -78,24 +84,25 @@ if __name__ == '__main__':
     config_space = {
         "steps": max_steps,
         "width": randint(0, 20),
-        "height": randint(-100, 100)
+        "height": randint(-100, 100),
     }
     entry_point = str(
-        Path(__file__).parent / "training_scripts" / "height_example" /
-        "train_height.py")
+        Path(__file__).parent
+        / "training_scripts"
+        / "height_example"
+        / "train_height.py"
+    )
     metric = "mean_loss"
 
     # Local back-end
-    backend = LocalBackend(entry_point=entry_point)
+    trial_backend = LocalBackend(entry_point=entry_point)
 
     np.random.seed(random_seed)
-    scheduler = SimpleScheduler(
-        config_space=config_space,
-        metric=metric)
+    scheduler = SimpleScheduler(config_space=config_space, metric=metric)
 
     stop_criterion = StoppingCriterion(max_wallclock_time=30)
     tuner = Tuner(
-        backend=backend,
+        trial_backend=trial_backend,
         scheduler=scheduler,
         stop_criterion=stop_criterion,
         n_workers=n_workers,

@@ -11,9 +11,8 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 import numpy as np
-from syne_tune.optimizer.schedulers.hyperband_promotion import \
-    PromotionRungSystem
-
+from syne_tune.optimizer.schedulers.hyperband_promotion import PromotionRungSystem
+import itertools
 
 class PASHARungSystem(PromotionRungSystem):
     """
@@ -24,11 +23,21 @@ class PASHARungSystem(PromotionRungSystem):
     TODO: add link
     """
 
-    def __init__(self, rung_levels, promote_quantiles, metric, mode,
-                 resource_attr, max_t, ranking_criterion,
-                 epsilon, epsilon_scaling):
-        super().__init__(rung_levels, promote_quantiles, metric, mode,
-                         resource_attr, max_t)
+    def __init__(
+        self,
+        rung_levels,
+        promote_quantiles,
+        metric,
+        mode,
+        resource_attr,
+        max_t,
+        ranking_criterion,
+        epsilon,
+        epsilon_scaling,
+    ):
+        super().__init__(
+            rung_levels, promote_quantiles, metric, mode, resource_attr, max_t
+        )
         self.ranking_criterion = ranking_criterion
         # define the index of the current top rung, starting from 1 for the lowest rung
         #
@@ -36,19 +45,20 @@ class PASHARungSystem(PromotionRungSystem):
         self.rung_levels = rung_levels
 
         # initialize current maximum resources
-        self.current_max_t = rung_levels[self.current_rung_idx-1]
+        self.current_max_t = rung_levels[self.current_rung_idx - 1]
 
-        # for score based criteria we will use epsilon as the threshold
-        # and epsilon scaling as the weight for how much to prioritize 
-        # the top of the ranking
         self.epsilon = epsilon
         self.epsilon_scaling = epsilon_scaling
+        if ranking_criterion == 'soft_ranking_auto':
+            self.per_epoch_results = {}
+            self.epoch_to_trials = {}
+            self.current_max_epoch = -1
 
     # overriding the method in HB promotion to accomodate the increasing max resources level
     def _effective_max_t(self):
         return self.current_max_t
 
-    def _get_top_two_rungs_rankings(self):
+    def _get_top_rungs_rankings(self, num_rungs=2):
         """
         Look at the current top two rungs and get the rankings of the configurations.
         The rungs can be empty, in which case we will return a list with 0 or 1 elements.
@@ -59,12 +69,14 @@ class PASHARungSystem(PromotionRungSystem):
         Lower values have lower ranks, starting from zero. For example:
         [('0', 0, 10.0), ('1', 3, 19.6), ('2', 2, 14.3), ('3', 1, 11.6)]
 
+        :param num_rungs: int describing how many top rungs to return
         :return: rankings
             List of at most two lists with tuple(trial_id, rank, score)
         """
         rankings = []
         # be careful, self._rungs is ordered with the highest resources level in the beginning
-        for rung in [self._rungs[-self.current_rung_idx], self._rungs[-self.current_rung_idx + 1]]:
+        rungs = [self._rungs[-self.current_rung_idx + e] for e in range(num_rungs)]
+        for rung in rungs:
             if rung.data != {}:
                 trial_ids = rung.data.keys()
                 values = []
@@ -92,17 +104,18 @@ class PASHARungSystem(PromotionRungSystem):
         # filter only the relevant configurations from the earlier rung
         top_rung_keys = set([e[0] for e in rankings[0]])
         corresponding_previous_rung_trials = filter(
-            lambda e: e[0] in top_rung_keys, rankings[1])
+            lambda e: e[0] in top_rung_keys, rankings[1]
+        )
         # if we try to maximize the objective, we need to reverse the ranking
-        if self._mode == 'max':
+        if self._mode == "max":
             reverse = True
         else:
             reverse = False
 
-        sorted_top_rung = sorted(
-            rankings[0], key=lambda e: e[1], reverse=reverse)
+        sorted_top_rung = sorted(rankings[0], key=lambda e: e[1], reverse=reverse)
         sorted_previous_rung = sorted(
-            corresponding_previous_rung_trials, key=lambda e: e[1], reverse=reverse)
+            corresponding_previous_rung_trials, key=lambda e: e[1], reverse=reverse
+        )
         return sorted_top_rung, sorted_previous_rung
 
     def _evaluate_soft_ranking(self, sorted_top_rung, sorted_previous_rung) -> bool:
@@ -118,19 +131,31 @@ class PASHARungSystem(PromotionRungSystem):
         keep_current_budget = True
         if len(sorted_previous_rung) < 2:
             epsilon = 0.0
-        elif self.ranking_criterion == 'soft_ranking_std':
-            epsilon = np.std(
-                [e[2] for e in sorted_previous_rung]) * self.epsilon_scaling
-        elif self.ranking_criterion == 'soft_ranking_median_dst' or self.ranking_criterion == 'soft_ranking_mean_dst':
+        elif self.ranking_criterion == "soft_ranking_std":
+            epsilon = (
+                np.std([e[2] for e in sorted_previous_rung]) * self.epsilon_scaling
+            )
+        elif (
+            self.ranking_criterion == "soft_ranking_median_dst"
+            or self.ranking_criterion == "soft_ranking_mean_dst"
+        ):
             scores = [e[2] for e in sorted_previous_rung]
-            distances = [abs(e1-e2) for idx1, e1 in enumerate(scores)
-                         for idx2, e2 in enumerate(scores) if idx1 != idx2]
-            if self.ranking_criterion == 'soft_ranking_mean_dst':
+            distances = [
+                abs(e1 - e2)
+                for idx1, e1 in enumerate(scores)
+                for idx2, e2 in enumerate(scores)
+                if idx1 != idx2
+            ]
+            if self.ranking_criterion == "soft_ranking_mean_dst":
                 epsilon = np.mean(distances) * self.epsilon_scaling
-            elif self.ranking_criterion == 'soft_ranking_median_dst':
+            elif self.ranking_criterion == "soft_ranking_median_dst":
                 epsilon = np.median(distances) * self.epsilon_scaling
             else:
-                raise ValueError('Ranking criterion {} is not supported'.format(self.ranking_criterion))
+                raise ValueError(
+                    "Ranking criterion {} is not supported".format(
+                        self.ranking_criterion
+                    )
+                )
         else:
             epsilon = self.epsilon
 
@@ -142,7 +167,7 @@ class PASHARungSystem(PromotionRungSystem):
             for idx_after in range(idx + 1, len(sorted_previous_rung)):
                 new_item = sorted_previous_rung[idx_after]
 
-                if self._mode == 'max':
+                if self._mode == "max":
                     if new_item[2] < item[2] - epsilon:
                         break
                 else:
@@ -152,7 +177,7 @@ class PASHARungSystem(PromotionRungSystem):
             # add configurations that are before the current configuration
             for idx_before in range(idx - 1, -1, -1):
                 new_item = sorted_previous_rung[idx_before]
-                if self._mode == 'max':
+                if self._mode == "max":
                     if new_item[2] > item[2] + epsilon:
                         break
                 else:
@@ -168,88 +193,61 @@ class PASHARungSystem(PromotionRungSystem):
                 break
 
         return keep_current_budget
-    
-    def _evaluate_ranking(self, sorted_top_rung, sorted_previous_rung) -> bool:
+
+    def _update_epsilon(self):
         """
-        Compare the rankings in the top two rungs and if they are not the same,
-        increase the resources.
+        This function is used to automatically calculate the value of epsilon.
+        It finds the configurations which swapped their rankings across rungs
+        and estimates the value of epsilon as the 90th percentile of the difference
+        between their performance in the previous rung.
 
-        :param sorted_top_rung: list of tuple(trial_id, rank, score)
-        :param sorted_previous_rung: list of tuple(sorted_top_rung, rank, score)
-        :return: keep_current_budget
+        The original value of epsilon is kept if no suitable configurations were found.
         """
-        keep_current_budget = True
-        # check if the ranking is the same in both lists
-        for top_rung_item, previous_rung_item in zip(sorted_top_rung, sorted_previous_rung):
-            if top_rung_item[0] != previous_rung_item[0]:
-                keep_current_budget = False
-        return keep_current_budget
 
-    def _evaluate_rbo(self, sorted_top_rung, sorted_previous_rung) -> bool:
-        """
-        Calculate rank biased overlap value for the top and previous rung,
-        compare it with a threshold value and decide if to increase resources.
+        seen_pairs = set()
+        noisy_cfg_distances = []
+        top_epoch = min(self.current_max_epoch, self._rungs[-self.current_rung_idx].level)
+        bottom_epoch = min(self._rungs[-self.current_rung_idx+1].level, self.current_max_epoch)
+        for epoch in range(top_epoch, bottom_epoch, -1):
+            if len(self.epoch_to_trials[epoch]) > 1:
+                for pair in itertools.combinations(self.epoch_to_trials[epoch], 2):
+                    c1, c2 = pair[0], pair[1]
+                    if (c1, c2) not in seen_pairs:
+                        seen_pairs.add((c1, c2))
+                        p1, p2 = self.per_epoch_results[c1][epoch], self.per_epoch_results[c2][epoch]
+                        cond = p1 > p2
 
-        Using this criterion requires rbo library installed.
+                        opposite_order = False
+                        same_order_after_opposite = False
+                        # now we need to check the earlier epochs to see if at any point they had a different order
+                        for prev_epoch in range(epoch - 1, 0, -1):
+                            pp1, pp2 = self.per_epoch_results[c1][prev_epoch], self.per_epoch_results[c2][prev_epoch]
+                            p_cond = pp1 > pp2
+                            if p_cond == (not cond):
+                                opposite_order = True
+                            if opposite_order and p_cond == cond:
+                                same_order_after_opposite = True
+                                break
 
-        :param sorted_top_rung: list of tuple(trial_id, rank, score)
-        :param sorted_previous_rung: list of tuple(sorted_top_rung, rank, score)
-        :return: keep_current_budget
-        """
-        import rbo
-        keep_current_budget = True
-        sorted_top_rung_trial_ids = [e[0] for e in sorted_top_rung]
-        sorted_previous_rung_trial_ids = [e[0] for e in sorted_previous_rung]
-        rbo_val = rbo.RankingSimilarity(sorted_previous_rung_trial_ids,
-                                        sorted_top_rung_trial_ids).rbo(p=self.epsilon_scaling)
-        if rbo_val < self.epsilon:
-            keep_current_budget = False
+                        if opposite_order and same_order_after_opposite:
+                            noisy_cfg_distances.append(abs(p1 - p2))
 
-        return keep_current_budget
+        if len(noisy_cfg_distances) > 0:
+            self.epsilon = np.percentile(noisy_cfg_distances, 90)
+            if str(self.epsilon) == 'nan':
+                raise ValueError('Epsilon became nan') 
 
-    def _evaluate_rrr(self, sorted_top_rung, sorted_previous_rung) -> bool:
-        """
-        Calculate reciprocal rank regret that takes into account the performance
-        of the different configurations and based on it decides if to increase resources.
+    def _update_per_epoch_results(self, trial_id, result):
+        if trial_id not in self.per_epoch_results:
+            self.per_epoch_results[trial_id] = {}
+        self.per_epoch_results[trial_id][result[self._resource_attr]] = result[self._metric]
 
-        :param sorted_top_rung: list of tuple(trial_id, rank, score)
-        :param sorted_previous_rung: list of tuple(sorted_top_rung, rank, score)
-        :return: keep_current_budget
-        """
-        keep_current_budget = True
-        top_rung_dict = {e[0]: e for e in sorted_top_rung}
-        reordered_top_rung = []
-        for trial_info in sorted_previous_rung:
-            reordered_top_rung.append(top_rung_dict[trial_info[0]])
-        rel_regrets = []
-        for top_rung_item, previous_rung_item in zip(sorted_top_rung, reordered_top_rung):
-            if self.ranking_criterion == 'arrr':
-                rel_regrets.append(
-                    abs(top_rung_item[2]-previous_rung_item[2])/top_rung_item[2])
-            else:
-                # if we maximize the metric, ordering from the previous rung will give a lower
-                # value for the top item
-                if self._mode == 'max':
-                    rel_regrets.append(
-                        (top_rung_item[2]-previous_rung_item[2])/top_rung_item[2])
-                else:
-                    # if we minimize the metric, ordering from the previous rung will give a higher
-                    # value for the top item - need to swap the order
-                    rel_regrets.append(
-                        (previous_rung_item[2]-top_rung_item[2])/top_rung_item[2])
-        w_rel_regrets_sum = 0.0
-        depth = 0
-        weights_sum = 0.0
-        for rel_regret in rel_regrets:
-            w_rel_regrets_sum += rel_regret * self.epsilon_scaling ** depth
-            weights_sum += self.epsilon_scaling ** depth
-            depth += 1
-        rrr_score = w_rel_regrets_sum / weights_sum
+        if result[self._resource_attr] not in self.epoch_to_trials:
+            self.epoch_to_trials[result[self._resource_attr]] = set() 
+        self.epoch_to_trials[result[self._resource_attr]].add(trial_id)
 
-        if rrr_score > self.epsilon:
-            keep_current_budget = False
-
-        return keep_current_budget
+        if result[self._resource_attr] > self.current_max_epoch:
+            self.current_max_epoch = result[self._resource_attr]
 
     def _decide_resource_increase(self, rankings) -> bool:
         """
@@ -268,51 +266,25 @@ class PASHARungSystem(PromotionRungSystem):
         else:
             return False
 
-        if 'soft_ranking' in self.ranking_criterion:
-            keep_current_budget = self._evaluate_soft_ranking(
-                sorted_top_rung, sorted_previous_rung)
-        elif self.ranking_criterion == 'ranking':
-            keep_current_budget = self._evaluate_ranking(sorted_top_rung, sorted_previous_rung)
-        elif self.ranking_criterion == 'rbo':
-            keep_current_budget = self._evaluate_rbo(sorted_top_rung, sorted_previous_rung)
-        elif 'rrr' in self.ranking_criterion:
-            keep_current_budget = self._evaluate_rrr(sorted_top_rung, sorted_previous_rung)
-        else:
-            raise ValueError(
-                'The specified resource increase strategy is not currently supported: ' + self.resource_increase_strategy)
-        
+        keep_current_budget = self._evaluate_soft_ranking(
+            sorted_top_rung, sorted_previous_rung
+        )
+
         return not keep_current_budget
 
-    def on_task_report(self, trial_id, result, skip_rungs):
+    def on_task_report(self, trial_id: str, result: dict, skip_rungs: int) -> dict:
         """
-        Decision on whether task may continue (task_continues = True), or
-        should be paused (task_continues = False).
-        milestone_reached is a flag whether resource coincides with a
-        milestone.
-        For this scheduler, we have that
-
-            task_continues == not milestone_reached,
-
-        since a trial is always paused at a milestone.
-
-        The function also checks the rankings and decides if to increase
-        the current maximum resources.
-
-        `ignore_data` is True if a result is received from a resumed trial
-        at a level <= `resume_from`. This happens if checkpointing is not
-        implemented (or not used), because resumed trials are started from
-        scratch then. These metric values should in general be ignored.
-
-        :param trial_id:
-        :param result:
-        :param skip_rungs:
-        :return: dict(task_continues, milestone_reached, next_milestone,
-                      ignore_data)
+        Apart from calling the superclass method, we also check the rankings
+        and decides if to increase the current maximum resources.
         """
         ret_dict = super().on_task_report(trial_id, result, skip_rungs)
 
+        if self.ranking_criterion == "soft_ranking_auto":
+            self._update_per_epoch_results(trial_id, result)
+            self._update_epsilon()
+
         # check the rankings and decide if to increase the current maximum resources
-        rankings = self._get_top_two_rungs_rankings()
+        rankings = self._get_top_rungs_rankings(num_rungs=2)
         increase_resources = self._decide_resource_increase(rankings)
 
         # we have a maximum amount of resources that PASHA can use
@@ -323,7 +295,7 @@ class PASHARungSystem(PromotionRungSystem):
                 # be careful, self.rung_levels is ordered with the highest resources level at the end
                 # moreover, since we use rung levels for counting both from the beginning and from the end of the list
                 # we need to remember that counting from the beginning it's zero indexed
-                self.current_max_t = self.rung_levels[self.current_rung_idx-1]
+                self.current_max_t = self.rung_levels[self.current_rung_idx - 1]
             else:
                 self.current_max_t = self.max_t
 

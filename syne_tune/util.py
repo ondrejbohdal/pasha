@@ -18,12 +18,16 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
-import sagemaker
 from time import perf_counter
 from contextlib import contextmanager
 
+from syne_tune.constants import SYNE_TUNE_DEFAULT_FOLDER, SYNE_TUNE_ENV_FOLDER
+from syne_tune.try_import import try_import_aws_message
 
-from syne_tune.constants import SYNE_TUNE_FOLDER
+try:
+    import sagemaker
+except ImportError:
+    print(try_import_aws_message())
 
 
 class RegularCallback:
@@ -45,27 +49,32 @@ class RegularCallback:
 
 
 def experiment_path(
-        tuner_name: Optional[str] = None,
-        local_path: Optional[str] = None) -> Path:
+    tuner_name: Optional[str] = None, local_path: Optional[str] = None
+) -> Path:
     f"""
+    Return the path of an experiment which is used both by the Tuner and to collect results of experiments.
     :param tuner_name: name of a tuning experiment
-    :param local_path: local path where results should be saved when running
-        locally outside of Sagemaker, if not specified, then
-        `~/{SYNE_TUNE_FOLDER}/` is used.
-    :return: path where to write logs and results for Syne Tune tuner.
-
-    On Sagemaker, results are written under "/opt/ml/checkpoints/" so that files are persisted
-    continuously by Sagemaker.
+    :param local_path: local path where results should be saved when running locally outside of Sagemaker.
+    If not specified, then the environment variable `"SYNETUNE_FOLDER"` is used if defined otherwise
+    `~/syne-tune/` is used. Defining the enviroment variable `"SYNETUNE_FOLDER"` allows to override the default path.
+    :return: path where to write logs and results for Syne Tune tuner. On Sagemaker, results are written
+    under "/opt/ml/checkpoints/" so that files are persisted continuously by Sagemaker.
     """
     is_sagemaker = "SM_MODEL_DIR" in os.environ
     if is_sagemaker:
         # if SM_MODEL_DIR is present in the environment variable, this means that we are running on Sagemaker
         # we use this path to store results as it is persisted by Sagemaker.
-        return Path('/opt/ml/checkpoints') / tuner_name
+        sagemaker_path = Path("/opt/ml/checkpoints")
+        if tuner_name is not None:
+            sagemaker_path = sagemaker_path / tuner_name
+        return sagemaker_path
     else:
         # means we are running on a local machine, we store results in a local path
         if local_path is None:
-            local_path = Path(f"~/{SYNE_TUNE_FOLDER}").expanduser()
+            if SYNE_TUNE_ENV_FOLDER in os.environ:
+                local_path = Path(os.environ[SYNE_TUNE_ENV_FOLDER]).expanduser()
+            else:
+                local_path = Path(f"~/{SYNE_TUNE_DEFAULT_FOLDER}").expanduser()
         else:
             local_path = Path(local_path)
         if tuner_name is not None:
@@ -74,8 +83,10 @@ def experiment_path(
 
 
 def s3_experiment_path(
-        s3_bucket: Optional[str] = None, experiment_name: Optional[str] = None,
-        tuner_name: Optional[str] = None) -> str:
+    s3_bucket: Optional[str] = None,
+    experiment_name: Optional[str] = None,
+    tuner_name: Optional[str] = None,
+) -> str:
     """
     Returns S3 path for storing results and checkpoints.
 
@@ -87,16 +98,17 @@ def s3_experiment_path(
     """
     if s3_bucket is None:
         s3_bucket = sagemaker.Session().default_bucket()
-    s3_path = f"s3://{s3_bucket}/{SYNE_TUNE_FOLDER}"
+    s3_path = f"s3://{s3_bucket}/{SYNE_TUNE_DEFAULT_FOLDER}"
     for part in (experiment_name, tuner_name):
         if part is not None:
-            s3_path += '/' + part
+            s3_path += "/" + part
     return s3_path
 
 
 def check_valid_sagemaker_name(name: str):
-    assert re.compile("^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,62}$").match(name), \
-        f"{name} should consists in alpha-digits possibly separated by character -"
+    assert re.compile("^[a-zA-Z0-9](-*[a-zA-Z0-9]){0,62}$").match(
+        name
+    ), f"{name} should consists in alpha-digits possibly separated by character -"
 
 
 def name_from_base(base: Optional[str], default: str, max_length: int = 63) -> str:
@@ -122,14 +134,16 @@ def name_from_base(base: Optional[str], default: str, max_length: int = 63) -> s
 
     moment = time.time()
     moment_ms = repr(moment).split(".")[1][:3]
-    timestamp = time.strftime("%Y-%m-%d-%H-%M-%S-{}".format(moment_ms), time.gmtime(moment))
+    timestamp = time.strftime(
+        "%Y-%m-%d-%H-%M-%S-{}".format(moment_ms), time.gmtime(moment)
+    )
     trimmed_base = base[: max_length - len(timestamp) - 1]
     return "{}-{}".format(trimmed_base, timestamp)
 
 
 def random_string(length: int) -> str:
     pool = string.ascii_letters + string.digits
-    return ''.join(random.choice(pool) for _ in range(length))
+    return "".join(random.choice(pool) for _ in range(length))
 
 
 def repository_root_path() -> Path:
@@ -145,8 +159,13 @@ def script_checkpoint_example_path() -> Path:
     Util to get easily the name of an example file
     :return:
     """
-    path = repository_root_path() / "examples" / "training_scripts" / \
-           "checkpoint_example" / "checkpoint_example.py"
+    path = (
+        repository_root_path()
+        / "examples"
+        / "training_scripts"
+        / "checkpoint_example"
+        / "checkpoint_example.py"
+    )
     assert path.exists()
     return path
 
@@ -156,8 +175,13 @@ def script_height_example_path():
     Util to get easily the name of an example file
     :return:
     """
-    path = repository_root_path() / "examples" / "training_scripts" / \
-           "height_example" / "train_height.py"
+    path = (
+        repository_root_path()
+        / "examples"
+        / "training_scripts"
+        / "height_example"
+        / "train_height.py"
+    )
     assert path.exists()
     return path
 

@@ -22,9 +22,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from syne_tune.backend.trial_backend import TrialBackend
 from syne_tune.num_gpu import get_num_gpus
 from syne_tune.report import retrieve
-from syne_tune.backend.backend import Backend
 from syne_tune.backend.trial_status import TrialResult, Status
 from syne_tune.constants import ST_CHECKPOINT_DIR
 from syne_tune.util import experiment_path, random_string
@@ -33,16 +33,19 @@ logger = logging.getLogger(__name__)
 
 
 if "OMP_NUM_THREADS" not in os.environ:
-    logger.debug("OMP_NUM_THREADS is not set, it is going to be set to 1 to avoid performance issues in case of many "
-                 "workers are used locally. Overrides this behavior by setting a custom value.")
+    logger.debug(
+        "OMP_NUM_THREADS is not set, it is going to be set to 1 to avoid performance issues in case of many "
+        "workers are used locally. Overrides this behavior by setting a custom value."
+    )
     os.environ["OMP_NUM_THREADS"] = "1"
 
 
-class LocalBackend(Backend):
+class LocalBackend(TrialBackend):
     def __init__(
-            self,
-            entry_point: str,
-            rotate_gpus: bool = True,
+        self,
+        entry_point: str,
+        rotate_gpus: bool = True,
+        delete_checkpoints: bool = False,
     ):
         """
         A backend running locally by spawning sub-process concurrently.
@@ -53,12 +56,17 @@ class LocalBackend(Backend):
         :param rotate_gpus: in case several GPUs are present, each trial is
             scheduled on a different GPU. A new trial is preferentially
             scheduled on a free GPU, and otherwise the GPU with least prior
-            assignments is chosen
+            assignments is chosen. If False, then all GPUs are used at the same
+            time for all trials.
+        :param delete_checkpoints: If True, checkpoints of stopped or completed
+            trials are deleted
 
         """
-        super(LocalBackend, self).__init__()
+        super(LocalBackend, self).__init__(delete_checkpoints)
 
-        assert Path(entry_point).exists(), f"the script provided to tune does not exist ({entry_point})"
+        assert Path(
+            entry_point
+        ).exists(), f"the script provided to tune does not exist ({entry_point})"
         self.entry_point = entry_point
 
         self.trial_subprocess = {}
@@ -74,13 +82,20 @@ class LocalBackend(Backend):
         # sets the path where to write files, can be overidden later by Tuner.
         self.set_path(Path(experiment_path(tuner_name=random_string(length=10))))
 
-    def trial_path(self, trial_id: int):
+    def trial_path(self, trial_id: int) -> Path:
         return self.local_path / str(trial_id)
 
+    def _checkpoint_trial_path(self, trial_id: int):
+        return self.trial_path(trial_id) / "checkpoints"
+
     def copy_checkpoint(self, src_trial_id: int, tgt_trial_id: int):
-        src_checkpoint_path = self.trial_path(src_trial_id) / "checkpoints"
-        tgt_checkpoint_path = self.trial_path(tgt_trial_id) / "checkpoints"
+        src_checkpoint_path = self._checkpoint_trial_path(src_trial_id)
+        tgt_checkpoint_path = self._checkpoint_trial_path(tgt_trial_id)
         shutil.copytree(src_checkpoint_path, tgt_checkpoint_path)
+
+    def delete_checkpoint(self, trial_id: int):
+        checkpoint_path = self._checkpoint_trial_path(trial_id)
+        shutil.rmtree(checkpoint_path, ignore_errors=True)
 
     def _prepare_for_schedule(self, num_gpus=None):
         """
@@ -113,8 +128,7 @@ class LocalBackend(Backend):
 
         """
         assert self.rotate_gpus
-        free_gpus = set(range(self.num_gpus)).difference(
-            self.trial_gpu.values())
+        free_gpus = set(range(self.num_gpus)).difference(self.trial_gpu.values())
         if free_gpus:
             eligible_gpus = free_gpus
             logging.debug(f"Free GPUs: {free_gpus}")
@@ -127,7 +141,8 @@ class LocalBackend(Backend):
         # smaller than the number of workers).
         res_gpu, _ = min(
             ((gpu, self.gpu_times_assigned[gpu]) for gpu in eligible_gpus),
-            key=lambda x: x[1])
+            key=lambda x: x[1],
+        )
         self.gpu_times_assigned[res_gpu] += 1
         return res_gpu
 
@@ -135,12 +150,16 @@ class LocalBackend(Backend):
         self._prepare_for_schedule()
         trial_path = self.trial_path(trial_id)
         os.makedirs(trial_path, exist_ok=True)
-        with open(trial_path / "std.out", 'a') as stdout:
-            with open(trial_path / "std.err", 'a') as stderr:
-                logging.debug(f"scheduling {trial_id}, {self.entry_point}, {config}, logging into {trial_path}")
+        with open(trial_path / "std.out", "a") as stdout:
+            with open(trial_path / "std.err", "a") as stderr:
+                logging.debug(
+                    f"scheduling {trial_id}, {self.entry_point}, {config}, logging into {trial_path}"
+                )
                 config_copy = config.copy()
                 config_copy[ST_CHECKPOINT_DIR] = str(trial_path / "checkpoints")
-                config_str = " ".join([f"--{key} {value}" for key, value in config_copy.items()])
+                config_str = " ".join(
+                    [f"--{key} {value}" for key, value in config_copy.items()]
+                )
 
                 def np_encoder(object):
                     if isinstance(object, np.generic):
@@ -158,16 +177,13 @@ class LocalBackend(Backend):
                 logging.info(f"running subprocess with command: {cmd}")
 
                 self.trial_subprocess[trial_id] = subprocess.Popen(
-                    cmd.split(" "),
-                    stdout=stdout,
-                    stderr=stderr,
-                    env=env
+                    cmd.split(" "), stdout=stdout, stderr=stderr, env=env
                 )
 
     def _allocate_gpu(self, trial_id: int, env: dict):
         if self.rotate_gpus:
             gpu = self._gpu_for_new_trial()
-            env['CUDA_VISIBLE_DEVICES'] = str(gpu)
+            env["CUDA_VISIBLE_DEVICES"] = str(gpu)
             self.trial_gpu[trial_id] = gpu
             logging.debug(f"Assigned GPU {gpu} to trial_id {trial_id}")
 
@@ -213,7 +229,7 @@ class LocalBackend(Backend):
             res.append(trial_results)
         return res
 
-    def _pause_trial(self, trial_id: int):
+    def _pause_trial(self, trial_id: int, result: Optional[dict]):
         self._file_path(trial_id=trial_id, filename="pause").touch()
         self._kill_process(trial_id)
         self._deallocate_gpu(trial_id)
@@ -225,7 +241,7 @@ class LocalBackend(Backend):
         except FileNotFoundError:
             logger.info(f"Pause lock file {str(pause_path)} not found")
 
-    def _stop_trial(self, trial_id: int):
+    def _stop_trial(self, trial_id: int, result: Optional[dict]):
         self._file_path(trial_id=trial_id, filename="stop").touch()
         self._kill_process(trial_id)
         self._deallocate_gpu(trial_id)
@@ -243,12 +259,12 @@ class LocalBackend(Backend):
 
     def _write_time_stamp(self, trial_id: int, name: str):
         time_stamp_path = self._file_path(trial_id=trial_id, filename=name)
-        with open(time_stamp_path, 'w') as f:
+        with open(time_stamp_path, "w") as f:
             f.write(str(datetime.now().timestamp()))
 
     def _read_time_stamp(self, trial_id: int, name: str):
         time_stamp_path = self._file_path(trial_id=trial_id, filename=name)
-        with open(time_stamp_path, 'r') as f:
+        with open(time_stamp_path, "r") as f:
             return datetime.fromtimestamp(float(f.readline()))
 
     def _is_process_done(self, trial_id: int) -> bool:
@@ -277,7 +293,9 @@ class LocalBackend(Backend):
         with open(self.trial_path(trial_id=trial_id) / "std.err", "r") as f:
             return f.readlines()
 
-    def set_path(self, results_root: Optional[str] = None, tuner_name: Optional[str] = None):
+    def set_path(
+        self, results_root: Optional[str] = None, tuner_name: Optional[str] = None
+    ):
         self.local_path = Path(results_root)
 
     def entrypoint_path(self) -> Path:

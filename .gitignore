@@ -4,5 +4,4 @@
 *__pycache__
 *.egg-info
 .idea
-experiment_results/
-*.out
+.vscode

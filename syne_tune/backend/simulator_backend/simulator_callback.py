@@ -13,11 +13,10 @@
 import logging
 
 from syne_tune.tuner_callback import StoreResultsCallback
-from syne_tune.backend.simulator_backend.simulator_backend import \
-    SimulatorBackend
-from syne_tune.tuner import Tuner
+from syne_tune.backend.simulator_backend.simulator_backend import SimulatorBackend
+from syne_tune import Tuner
 from syne_tune.constants import ST_TUNER_TIME
-from syne_tune.stopping_criterion import StoppingCriterion
+from syne_tune import StoppingCriterion
 from syne_tune.optimizer.schedulers.fifo import FIFOScheduler
 
 logger = logging.getLogger(__name__)
@@ -47,6 +46,7 @@ class SimulatorCallback(StoreResultsCallback):
     time keeper.
 
     """
+
     def __init__(self):
         # Note: `results_update_interval` is w.r.t. real time, not
         # simulated time. Storing results intermediately is not important for
@@ -62,11 +62,12 @@ class SimulatorCallback(StoreResultsCallback):
         if not isinstance(stop_criterion, StoppingCriterion):
             # Note: We could raise an exception here ...
             logger.warning(
-                "The stop_criterion argument to Tuner is not of type " +\
-                "StoppingCriterion. This can be problematic when using " +\
-                "the SimulatorBackend. If your stop_criterion depends on " +\
-                "wallclock time, you'll get wrong behaviour. It is highly " +\
-                "recommended to use StoppingCriterion!")
+                "The stop_criterion argument to Tuner is not of type "
+                + "StoppingCriterion. This can be problematic when using "
+                + "the SimulatorBackend. If your stop_criterion depends on "
+                + "wallclock time, you'll get wrong behaviour. It is highly "
+                + "recommended to use StoppingCriterion!"
+            )
         elif stop_criterion.max_wallclock_time is not None:
             # Since `TuningStatus` is measuring real time, not simulated time,
             # we need to replace the `max_wallclock_time` part of this criterion
@@ -80,17 +81,25 @@ class SimulatorCallback(StoreResultsCallback):
                 max_num_trials_completed=stop_criterion.max_num_trials_completed,
                 max_cost=stop_criterion.max_cost,
                 max_num_trials_finished=stop_criterion.max_num_trials_finished,
-                max_metric_value={ST_TUNER_TIME: max_wallclock_time})
+                max_metric_value={ST_TUNER_TIME: max_wallclock_time},
+                max_num_evaluations=stop_criterion.max_num_evaluations,
+            )
             tuner.stop_criterion = new_stop_criterion
 
     def on_tuning_start(self, tuner: "Tuner"):
         super(SimulatorCallback, self).on_tuning_start(tuner=tuner)
-
-        backend = tuner.backend
-        assert isinstance(backend, SimulatorBackend), \
-            "Use SimulatorCallback only together with SimulatorBackend"
-        assert tuner.sleep_time == 0, \
-            "Initialize Tuner with sleep_time = 0 if you use the SimulatorBackend"
+        if tuner.sleep_time != 0:
+            logger.warning(
+                "Setting sleep time of tuner to 0 as it is required for simulations."
+            )
+            tuner.sleep_time = 0
+        backend = tuner.trial_backend
+        assert isinstance(
+            backend, SimulatorBackend
+        ), "Use SimulatorCallback only together with SimulatorBackend"
+        assert (
+            tuner.sleep_time == 0
+        ), "Initialize Tuner with sleep_time = 0 if you use the SimulatorBackend"
         self._time_keeper = backend.time_keeper
         scheduler = tuner.scheduler
         if isinstance(scheduler, FIFOScheduler):

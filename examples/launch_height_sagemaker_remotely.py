@@ -19,16 +19,18 @@ from pathlib import Path
 
 from sagemaker.pytorch import PyTorch
 
-from syne_tune.backend.local_backend import LocalBackend
-from syne_tune.backend.sagemaker_backend.sagemaker_utils import get_execution_role
+from syne_tune.backend import LocalBackend
+from syne_tune.backend.sagemaker_backend.sagemaker_utils import (
+    get_execution_role,
+    default_sagemaker_session,
+)
 from syne_tune.optimizer.baselines import RandomSearch
 from syne_tune.remote.remote_launcher import RemoteLauncher
-from syne_tune.backend.sagemaker_backend.sagemaker_backend import SagemakerBackend
-from syne_tune.search_space import randint
-from syne_tune.stopping_criterion import StoppingCriterion
-from syne_tune.tuner import Tuner
+from syne_tune.backend import SageMakerBackend
+from syne_tune.config_space import randint
+from syne_tune import StoppingCriterion, Tuner
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
 
     max_steps = 100
@@ -37,11 +39,14 @@ if __name__ == '__main__':
     config_space = {
         "steps": max_steps,
         "width": randint(0, 20),
-        "height": randint(-100, 100)
+        "height": randint(-100, 100),
     }
     entry_point = str(
-        Path(__file__).parent / "training_scripts" / "height_example" /
-        "train_height.py")
+        Path(__file__).parent
+        / "training_scripts"
+        / "height_example"
+        / "train_height.py"
+    )
     mode = "min"
     metric = "mean_loss"
 
@@ -50,7 +55,7 @@ if __name__ == '__main__':
     # Using the sagemaker backend means the remote instance will launch one sagemaker job per trial.
     distribute_trials_on_sagemaker = False
     if distribute_trials_on_sagemaker:
-        backend = SagemakerBackend(
+        trial_backend = SageMakerBackend(
             # we tune a PyTorch Framework from Sagemaker
             sm_estimator=PyTorch(
                 entry_point=entry_point,
@@ -58,35 +63,33 @@ if __name__ == '__main__':
                 instance_count=1,
                 role=get_execution_role(),
                 max_run=10 * 60,
-                framework_version='1.6',
-                py_version='py3',
+                framework_version="1.6",
+                py_version="py3",
                 base_job_name="hpo-height",
+                sagemaker_session=default_sagemaker_session(),
             ),
         )
     else:
-        backend = LocalBackend(entry_point=entry_point)
+        trial_backend = LocalBackend(entry_point=entry_point)
 
     for seed in range(2):
         # Random search without stopping
         scheduler = RandomSearch(
-            config_space,
-            mode=mode,
-            metric=metric,
-            random_seed=seed
+            config_space, mode=mode, metric=metric, random_seed=seed
         )
 
         tuner = RemoteLauncher(
             tuner=Tuner(
-                backend=backend,
+                trial_backend=trial_backend,
                 scheduler=scheduler,
                 n_workers=n_workers,
                 tuner_name="height-tuning",
                 stop_criterion=StoppingCriterion(max_wallclock_time=600),
             ),
-            # Extra arguments describing the ressource of the remote tuning instance and whether we want to wait
+            # Extra arguments describing the resource of the remote tuning instance and whether we want to wait
             # the tuning to finish. The instance-type where the tuning job runs can be different than the
             # instance-type used for evaluating the training jobs.
-            instance_type='ml.m5.large',
+            instance_type="ml.m5.large",
         )
 
         tuner.run(wait=False)

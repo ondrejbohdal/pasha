@@ -18,15 +18,17 @@ from pathlib import Path
 
 from sagemaker.pytorch import PyTorch
 
-from syne_tune.backend.sagemaker_backend.sagemaker_backend import SagemakerBackend
-from syne_tune.backend.sagemaker_backend.sagemaker_utils import get_execution_role
+from syne_tune.backend import SageMakerBackend
+from syne_tune.backend.sagemaker_backend.sagemaker_utils import (
+    get_execution_role,
+    default_sagemaker_session,
+)
 from syne_tune.optimizer.baselines import RandomSearch
-from syne_tune.tuner import Tuner
-from syne_tune.search_space import randint
-from syne_tune.stopping_criterion import StoppingCriterion
+from syne_tune import Tuner, StoppingCriterion
+from syne_tune.config_space import randint
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
 
     random_seed = 31415927
@@ -36,20 +38,23 @@ if __name__ == '__main__':
     config_space = {
         "steps": max_steps,
         "width": randint(0, 20),
-        "height": randint(-100, 100)
+        "height": randint(-100, 100),
     }
-    entry_point = Path(__file__).parent / "training_scripts" / "height_example" / "train_height.py"
+    entry_point = (
+        Path(__file__).parent
+        / "training_scripts"
+        / "height_example"
+        / "train_height.py"
+    )
     mode = "min"
     metric = "mean_loss"
 
     # Random search without stopping
     scheduler = RandomSearch(
-        config_space,
-        mode=mode,
-        metric=metric,
-        random_seed=random_seed)
+        config_space, mode=mode, metric=metric, random_seed=random_seed
+    )
 
-    backend = SagemakerBackend(
+    trial_backend = SageMakerBackend(
         # we tune a PyTorch Framework from Sagemaker
         sm_estimator=PyTorch(
             entry_point=str(entry_point),
@@ -57,8 +62,9 @@ if __name__ == '__main__':
             instance_count=1,
             role=get_execution_role(),
             max_run=10 * 60,
-            framework_version='1.7.1',
-            py_version='py3',
+            framework_version="1.7.1",
+            py_version="py3",
+            sagemaker_session=default_sagemaker_session(),
         ),
         # names of metrics to track. Each metric will be detected by Sagemaker if it is written in the
         # following form: "[RMSE]: 1.2", see in train_main_example how metrics are logged for an example
@@ -67,7 +73,7 @@ if __name__ == '__main__':
 
     stop_criterion = StoppingCriterion(max_wallclock_time=600)
     tuner = Tuner(
-        backend=backend,
+        trial_backend=trial_backend,
         scheduler=scheduler,
         stop_criterion=stop_criterion,
         n_workers=n_workers,

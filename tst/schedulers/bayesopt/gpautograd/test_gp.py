@@ -13,46 +13,56 @@
 import numpy
 import autograd.numpy as anp
 
-from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.mean \
-    import ScalarMeanFunction
-from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.kernel \
-    import Matern52
-from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.likelihood \
-    import MarginalLikelihood
-from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.gp_regression \
-    import GaussianProcessRegression
-from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.constants \
-    import NOISE_VARIANCE_LOWER_BOUND, INVERSE_BANDWIDTHS_LOWER_BOUND
-from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.gluon_blocks_helpers \
-    import LogarithmScalarEncoding, PositiveScalarEncoding
+from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.mean import (
+    ScalarMeanFunction,
+)
+from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.kernel import Matern52
+from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.likelihood import (
+    GaussianProcessMarginalLikelihood,
+)
+from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.gp_regression import (
+    GaussianProcessRegression,
+)
+from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.constants import (
+    NOISE_VARIANCE_LOWER_BOUND,
+    INVERSE_BANDWIDTHS_LOWER_BOUND,
+)
+from syne_tune.optimizer.schedulers.searchers.bayesopt.gpautograd.gluon_blocks_helpers import (
+    LogarithmScalarEncoding,
+    PositiveScalarEncoding,
+)
 
 
 def test_likelihood_encoding():
     mean = ScalarMeanFunction()
     kernel = Matern52(dimension=1)
-    likelihood = MarginalLikelihood(mean=mean, kernel=kernel)
-    assert isinstance(likelihood.encoding, LogarithmScalarEncoding)
-    likelihood = MarginalLikelihood(mean=mean, kernel=kernel, encoding_type="positive")
-    assert isinstance(likelihood.encoding, PositiveScalarEncoding)
+    likelihood = GaussianProcessMarginalLikelihood(mean=mean, kernel=kernel)
+    assert isinstance(likelihood.encoding_noise, LogarithmScalarEncoding)
+    likelihood = GaussianProcessMarginalLikelihood(
+        mean=mean, kernel=kernel, encoding_type="positive"
+    )
+    assert isinstance(likelihood.encoding_noise, PositiveScalarEncoding)
 
 
 def test_gp_regression_no_noise():
-
     def f(x):
-        return anp.sin(x)/x
+        return anp.sin(x) / x
 
-    x_train = anp.arange(-5, 5, 0.2)# [-5,-4.8,-4.6,...,4.8]
-    x_test = anp.arange(-4.9, 5, 0.2)# [-4.9, -4.7, -4.5,...,4.9], note that train and test points do not overlap
+    x_train = anp.arange(-5, 5, 0.2)  # [-5,-4.8,-4.6,...,4.8]
+    x_test = anp.arange(
+        -4.9, 5, 0.2
+    )  # [-4.9, -4.7, -4.5,...,4.9], note that train and test points do not overlap
     y_train = f(x_train)
     y_test = f(x_test)
 
     # to np.ndarray
     y_train_np_ndarray = anp.array(y_train)
-    x_train_np_ndarray = anp.array(x_train)
-    x_test_np_ndarray = anp.array(x_test)
+    x_train_np_ndarray = anp.array(x_train).reshape((-1, 1))
+    x_test_np_ndarray = anp.array(x_test).reshape((-1, 1))
 
     model = GaussianProcessRegression(kernel=Matern52(dimension=1))
-    model.fit(x_train_np_ndarray, y_train_np_ndarray)
+    data = {"features": x_train_np_ndarray, "targets": y_train_np_ndarray}
+    model.fit(data)
 
     # Check that the value of the residual noise variance learned by empirical Bayes is in the same order
     # as the smallest allowed value (since there is no noise)
@@ -81,28 +91,33 @@ def test_gp_regression_no_noise():
 
 
 def test_gp_regression_with_noise():
-
     def f(x):
-        return anp.sin(x)/x
+        return anp.sin(x) / x
 
     anp.random.seed(7)
 
-    x_train = anp.arange(-5, 5, 0.2)# [-5, -4.8, -4.6,..., 4.8]
-    x_test = anp.arange(-4.9, 5, 0.2)# [-4.9, -4.7, -4.5,..., 4.9], note that train and test points do not overlap
+    x_train = anp.arange(-5, 5, 0.2)  # [-5, -4.8, -4.6,..., 4.8]
+    x_test = anp.arange(
+        -4.9, 5, 0.2
+    )  # [-4.9, -4.7, -4.5,..., 4.9], note that train and test points do not overlap
     y_train = f(x_train)
     y_test = f(x_test)
 
     std_noise = 0.01
-    noise_train = anp.random.normal(0.0, std_noise,size=y_train.shape)
+    noise_train = anp.random.normal(0.0, std_noise, size=y_train.shape)
 
     # to anp.ndarray
     y_train_np_ndarray = anp.array(y_train)
     noise_train_np_ndarray = anp.array(noise_train)
-    x_train_np_ndarray = anp.array(x_train)
-    x_test_np_ndarray = anp.array(x_test)
+    x_train_np_ndarray = anp.array(x_train).reshape((-1, 1))
+    x_test_np_ndarray = anp.array(x_test).reshape((-1, 1))
 
     model = GaussianProcessRegression(kernel=Matern52(dimension=1))
-    model.fit(x_train_np_ndarray, y_train_np_ndarray + noise_train_np_ndarray)
+    data = {
+        "features": x_train_np_ndarray,
+        "targets": y_train_np_ndarray + noise_train_np_ndarray,
+    }
+    model.fit(data)
 
     # Check that the value of the residual noise variance learned by empirical Bayes is in the same order as std_noise^2
     noise_variance = model.likelihood.get_noise_variance()
@@ -116,18 +131,17 @@ def test_gp_regression_with_noise():
 
 
 def test_gp_regression_2d_with_ard():
-
     def f(x):
         # Only dependent on the first column of x
-        return anp.sin(x[:,0])/x[:,0]
+        return anp.sin(x[:, 0]) / x[:, 0]
 
     anp.random.seed(7)
 
     dimension = 3
 
     # 30 train and test points in R^3
-    x_train = anp.random.uniform(-5, 5, size=(30,dimension))
-    x_test = anp.random.uniform(-5, 5, size=(30,dimension))
+    x_train = anp.random.uniform(-5, 5, size=(30, dimension))
+    x_test = anp.random.uniform(-5, 5, size=(30, dimension))
     y_train = f(x_train)
     y_test = f(x_test)
 
@@ -137,7 +151,8 @@ def test_gp_regression_2d_with_ard():
     x_test_np_ndarray = anp.array(x_test)
 
     model = GaussianProcessRegression(kernel=Matern52(dimension=dimension, ARD=True))
-    model.fit(x_train_np_ndarray, y_train_np_ndarray)
+    data = {"features": x_train_np_ndarray, "targets": y_train_np_ndarray}
+    model.fit(data)
 
     # Check that the value of the residual noise variance learned by empirical Bayes is in the same order as the smallest allowed value (since there is no noise)
     noise_variance = model.likelihood.get_noise_variance()
@@ -149,9 +164,16 @@ def test_gp_regression_2d_with_ard():
     sqd = model.likelihood.kernel.squared_distance
     inverse_bandwidths = sqd.encoding.get(sqd.inverse_bandwidths_internal.data())
 
-    assert inverse_bandwidths[0] > inverse_bandwidths[1] and inverse_bandwidths[0] > inverse_bandwidths[2]
-    numpy.testing.assert_almost_equal(inverse_bandwidths[1], INVERSE_BANDWIDTHS_LOWER_BOUND)
-    numpy.testing.assert_almost_equal(inverse_bandwidths[2], INVERSE_BANDWIDTHS_LOWER_BOUND)
+    assert (
+        inverse_bandwidths[0] > inverse_bandwidths[1]
+        and inverse_bandwidths[0] > inverse_bandwidths[2]
+    )
+    numpy.testing.assert_almost_equal(
+        inverse_bandwidths[1], INVERSE_BANDWIDTHS_LOWER_BOUND
+    )
+    numpy.testing.assert_almost_equal(
+        inverse_bandwidths[2], INVERSE_BANDWIDTHS_LOWER_BOUND
+    )
 
     mu_train, _ = model.predict(x_train_np_ndarray)[0]
     mu_test, _ = model.predict(x_test_np_ndarray)[0]

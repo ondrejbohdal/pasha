@@ -18,33 +18,43 @@ from typing import Dict, List, Optional
 import boto3
 from botocore.exceptions import ClientError
 import numpy as np
-from sagemaker import LocalSession, Session
 
+from sagemaker import LocalSession
+from sagemaker.estimator import Framework
+
+from syne_tune.backend.trial_backend import TrialBackend
 from syne_tune.constants import ST_INSTANCE_TYPE, ST_INSTANCE_COUNT, ST_CHECKPOINT_DIR
 from syne_tune.util import s3_experiment_path
-from syne_tune.backend.backend import Backend
 from syne_tune.backend.trial_status import TrialResult, Status
-from syne_tune.backend.sagemaker_backend.sagemaker_utils import \
-    sagemaker_search, get_log, sagemaker_fit, metric_definitions_from_names, \
-    add_syne_tune_dependency, map_identifier_limited_length
-from sagemaker.estimator import Framework
+from syne_tune.backend.sagemaker_backend.sagemaker_utils import (
+    sagemaker_search,
+    get_log,
+    sagemaker_fit,
+    metric_definitions_from_names,
+    add_syne_tune_dependency,
+    map_identifier_limited_length,
+    s3_copy_files_recursively,
+    s3_delete_files_recursively,
+    default_config,
+    default_sagemaker_session,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
-class SagemakerBackend(Backend):
-
+class SageMakerBackend(TrialBackend):
     def __init__(
-            self,
-            sm_estimator: Framework,
-            metrics_names: Optional[List[str]] = None,
-            s3_path: Optional[str] = None,
-            *args,
-            **sagemaker_fit_kwargs):
+        self,
+        sm_estimator: Framework,
+        metrics_names: Optional[List[str]] = None,
+        s3_path: Optional[str] = None,
+        delete_checkpoints: bool = False,
+        *args,
+        **sagemaker_fit_kwargs,
+    ):
         """
         :param sm_estimator: sagemaker estimator to be fitted
-        :param sm_client: sagemaker client, for instance obtained with `sm = boto3.client(service_name='sagemaker')`
         :param metrics_names: name of metrics passed to `report`, used to plot live curve in sagemaker (optional, only
         used for visualization purpose)
         :param s3_path: S3 base path used for checkpointing. The full path
@@ -52,7 +62,10 @@ class SagemakerBackend(Backend):
         :param sagemaker_fit_kwargs: extra arguments that are passed to sagemaker.estimator.Framework when fitting the
         job, for instance `{'train': 's3://my-data-bucket/path/to/my/training/data'}`
         """
-        super(SagemakerBackend, self).__init__()
+        assert (
+            not delete_checkpoints
+        ), "delete_checkpoints=True not yet supported for SageMaker backend"
+        super(SageMakerBackend, self).__init__()
         self.sm_estimator = sm_estimator
 
         # edit the sagemaker estimator so that metrics of the user can be plotted over time by sagemaker and so that
@@ -68,8 +81,7 @@ class SagemakerBackend(Backend):
         else:
             base_job_name = st_prefix + self.sm_estimator.base_job_name
         # Make sure len(base_job_name) <= 63
-        self.sm_estimator.base_job_name = map_identifier_limited_length(
-            base_job_name)
+        self.sm_estimator.base_job_name = map_identifier_limited_length(base_job_name)
 
         add_syne_tune_dependency(self.sm_estimator)
 
@@ -84,12 +96,12 @@ class SagemakerBackend(Backend):
         self.resumed_counter = dict()
         if s3_path is None:
             s3_path = s3_experiment_path()
-        self.s3_path = s3_path
+        self.s3_path = s3_path.rstrip("/")
         self.tuner_name = None
 
     @property
     def sm_client(self):
-        return boto3.client(service_name='sagemaker')
+        return boto3.client(service_name="sagemaker", config=default_config())
 
     def add_metric_definitions_to_sagemaker_estimator(self, metrics_names: List[str]):
         # We add metric definitions corresponding to the metrics passed by `report` that the user wants to track
@@ -97,17 +109,27 @@ class SagemakerBackend(Backend):
         # The reason why we ask to the user metric names is that they are required to be known before hand so that live
         # plotting works.
         if self.sm_estimator.metric_definitions is None:
-            self.sm_estimator.metric_definitions = metric_definitions_from_names(metrics_names)
+            self.sm_estimator.metric_definitions = metric_definitions_from_names(
+                metrics_names
+            )
         else:
-            self.sm_estimator.metric_definitions = self.sm_estimator.metric_definitions + metric_definitions_from_names(self.metrics_names)
+            self.sm_estimator.metric_definitions = (
+                self.sm_estimator.metric_definitions
+                + metric_definitions_from_names(self.metrics_names)
+            )
         if len(self.sm_estimator.metric_definitions) > 40:
             logger.warning(
-                "Sagemaker only supports 40 metrics for learning curve visualization, keeping only the first 40")
-            self.sm_estimator.metric_definitions = self.sm_estimator.metric_definitions[:40]
+                "Sagemaker only supports 40 metrics for learning curve visualization, keeping only the first 40"
+            )
+            self.sm_estimator.metric_definitions = self.sm_estimator.metric_definitions[
+                :40
+            ]
 
     def _all_trial_results(self, trial_ids: List[int]) -> List[TrialResult]:
         res = sagemaker_search(
-            trial_ids_and_names=[(jobid, self.job_id_mapping[jobid]) for jobid in trial_ids],
+            trial_ids_and_names=[
+                (jobid, self.job_id_mapping[jobid]) for jobid in trial_ids
+            ],
             sm_client=self.sm_client,
         )
 
@@ -124,7 +146,14 @@ class SagemakerBackend(Backend):
         def np_encoder(object):
             if isinstance(object, np.generic):
                 return object.item()
+
         return json.loads(json.dumps(dict, default=np_encoder))
+
+    def _checkpoint_s3_uri_for_trial(self, trial_id: int) -> str:
+        res_path = self.s3_path
+        if self.tuner_name is not None:
+            res_path = f"{res_path}/{self.tuner_name}"
+        return f"{res_path}/{str(trial_id)}/checkpoints/"
 
     def _schedule(self, trial_id: int, config: Dict):
         config[ST_CHECKPOINT_DIR] = "/opt/ml/checkpoints"
@@ -147,11 +176,10 @@ class SagemakerBackend(Backend):
             self.sm_estimator.instance_count = hyperparameters[ST_INSTANCE_COUNT]
 
         if self.sm_estimator.instance_type != "local":
-            if self.tuner_name is not None:
-                checkpoint_s3_uri = f"{self.s3_path}/{self.tuner_name}/{trial_id}/"
-            else:
-                checkpoint_s3_uri = f"{self.s3_path}/{trial_id}/"
-            logging.info(f"Trial {trial_id} will checkpoint results to {checkpoint_s3_uri}.")
+            checkpoint_s3_uri = self._checkpoint_s3_uri_for_trial(trial_id)
+            logging.info(
+                f"Trial {trial_id} will checkpoint results to {checkpoint_s3_uri}."
+            )
         else:
             # checkpointing is not supported in local mode. When using local mode with remote tuner (for instance for
             # debugging), results are not stored.
@@ -174,11 +202,11 @@ class SagemakerBackend(Backend):
         logger.info(f"scheduled {jobname} for trial-id {trial_id}")
         self.job_id_mapping[trial_id] = jobname
 
-    def _pause_trial(self, trial_id: int):
+    def _pause_trial(self, trial_id: int, result: Optional[dict]):
         self._stop_trial_job(trial_id)
         self.paused_jobs.add(trial_id)
 
-    def _stop_trial(self, trial_id: int):
+    def _stop_trial(self, trial_id: int, result: Optional[dict]):
         training_job_name = self.job_id_mapping[trial_id]
         logger.info(f"stopping {trial_id} ({training_job_name})")
         self._stop_trial_job(trial_id)
@@ -193,7 +221,9 @@ class SagemakerBackend(Backend):
             pass
 
     def _resume_trial(self, trial_id: int):
-        assert trial_id in self.paused_jobs, f"Try to resume trial {trial_id} that was not paused before."
+        assert (
+            trial_id in self.paused_jobs
+        ), f"Try to resume trial {trial_id} that was not paused before."
         self.paused_jobs.remove(trial_id)
         if trial_id in self.resumed_counter:
             self.resumed_counter[trial_id] += 1
@@ -235,28 +265,71 @@ class SagemakerBackend(Backend):
         if is_running_on_sagemaker:
             # todo support dependencies on Sagemaker estimator, one way would be to ship them with the remote
             #  dependencies
-            self.sm_estimator.dependencies = [Path(dep).name for dep in self.sm_estimator.dependencies]
+            self.sm_estimator.dependencies = [
+                Path(dep).name for dep in self.sm_estimator.dependencies
+            ]
 
     def initialize_sagemaker_session(self):
         if boto3.Session().region_name is None:
             # avoids error "Must setup local AWS configuration with a region supported by SageMaker."
             # in case no region is explicitely configured
-            os.environ['AWS_DEFAULT_REGION'] = 'us-west-2'
+            os.environ["AWS_DEFAULT_REGION"] = "us-west-2"
 
         if self.sm_estimator.instance_type in ("local", "local_gpu"):
-            if self.sm_estimator.instance_type == "local_gpu" and self.sm_estimator.instance_count > 1:
+            if (
+                self.sm_estimator.instance_type == "local_gpu"
+                and self.sm_estimator.instance_count > 1
+            ):
                 raise RuntimeError("Distributed Training in Local GPU is not supported")
             self.sm_estimator.sagemaker_session = LocalSession()
         else:
-            self.sm_estimator.sagemaker_session = Session()
+            # Use SageMaker boto3 client with default config. This is important
+            # to configure automatic retry options properly
+            self.sm_estimator.sagemaker_session = default_sagemaker_session()
 
     def copy_checkpoint(self, src_trial_id: int, tgt_trial_id: int):
-        # todo sync checkpoint path with s3 sync
-        logger.warning(
-            "Starting trials with a previous checkpoint is not supported yet in Sagemaker. "
-            "The trial will run from scratch."
+        s3_source_path = self._checkpoint_s3_uri_for_trial(src_trial_id)
+        s3_target_path = self._checkpoint_s3_uri_for_trial(tgt_trial_id)
+        logger.info(
+            f"Copying checkpoint files from {s3_source_path} to " + s3_target_path
         )
+        result = s3_copy_files_recursively(s3_source_path, s3_target_path)
+        num_action_calls = result["num_action_calls"]
+        if num_action_calls == 0:
+            logger.info(f"No checkpoint files found at {s3_source_path}")
+        else:
+            num_successful_action_calls = result["num_successful_action_calls"]
+            assert num_successful_action_calls == num_action_calls, (
+                f"{num_successful_action_calls} files copied successfully, "
+                + f"{num_action_calls - num_successful_action_calls} failures. "
+                + "Error:\n"
+                + result["first_error_message"]
+            )
 
-    def set_path(self, results_root: Optional[str] = None, tuner_name: Optional[str] = None):
+    def delete_checkpoint(self, trial_id: int):
+        s3_path = self._checkpoint_s3_uri_for_trial(trial_id)
+        result = s3_delete_files_recursively(s3_path)
+        num_action_calls = result["num_action_calls"]
+        if num_action_calls > 0:
+            num_successful_action_calls = result["num_successful_action_calls"]
+            if num_successful_action_calls == num_action_calls:
+                logger.info(
+                    f"Deleted {num_action_calls} checkpoint files from {s3_path}"
+                )
+            else:
+                logger.warning(
+                    f"Successfully deleted {num_successful_action_calls} "
+                    f"checkpoint files from {s3_path}, but failed to delete "
+                    f"{num_action_calls - num_successful_action_calls} files. "
+                    "Error:\n" + result["first_error_message"]
+                )
+
+    def set_path(
+        self, results_root: Optional[str] = None, tuner_name: Optional[str] = None
+    ):
         # we use the tuner-name to set the checkpoint directory
         self.tuner_name = tuner_name
+
+    def on_tuner_save(self):
+        # Re-initialize the session after `Tuner` is serialized
+        self.initialize_sagemaker_session()

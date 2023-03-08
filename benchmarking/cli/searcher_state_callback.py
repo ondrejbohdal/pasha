@@ -1,13 +1,25 @@
+# Copyright 2021 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License").
+# You may not use this file except in compliance with the License.
+# A copy of the License is located at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# or in the "license" file accompanying this file. This file is distributed
+# on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied. See the License for the specific language governing
+# permissions and limitations under the License.
 from typing import Dict
 import json
 import time
 
 from syne_tune.tuner_callback import TunerCallback
-from syne_tune.tuner import Tuner
+from syne_tune import Tuner
 from syne_tune.backend.trial_status import Trial
-from syne_tune.optimizer.schedulers.fifo import FIFOScheduler
-from syne_tune.optimizer.schedulers.searchers.gp_fifo_searcher import \
-    ModelBasedSearcher
+from syne_tune.optimizer.schedulers import FIFOScheduler
+from syne_tune.optimizer.schedulers.searchers.gp_fifo_searcher import ModelBasedSearcher
+
 
 class StoreSearcherStatesCallback(TunerCallback):
     """
@@ -22,6 +34,7 @@ class StoreSearcherStatesCallback(TunerCallback):
     is stored.
 
     """
+
     def __init__(self):
         super().__init__()
         self._states = []
@@ -36,18 +49,18 @@ class StoreSearcherStatesCallback(TunerCallback):
             if isinstance(searcher, ModelBasedSearcher):
                 self._searcher = searcher
 
-    def on_trial_result(self, trial: Trial, status: str, result: Dict,
-                        decision: str):
+    def on_trial_result(self, trial: Trial, status: str, result: Dict, decision: str):
         if self._searcher is not None:
             state = self._searcher.state_transformer.state
             num_observations = state.num_observed_cases()
-            if self._num_observations is None or \
-                    num_observations != self._num_observations:
+            if (
+                self._num_observations is None
+                or num_observations != self._num_observations
+            ):
                 searcher_state = self._searcher.get_state()
-                searcher_state['elapsed_time'] = \
-                    time.time() - self._start_time
-                searcher_state['num_observations'] = num_observations
-                searcher_state['num_configs'] = len(state.candidate_evaluations)
+                searcher_state["elapsed_time"] = time.time() - self._start_time
+                searcher_state["num_observations"] = num_observations
+                searcher_state["num_configs"] = len(state.candidate_evaluations)
                 self._states.append(searcher_state)
                 self._num_observations = num_observations
 
@@ -63,10 +76,10 @@ class StoreSearcherStatesCallback(TunerCallback):
             lines.append(f"# elapsed_time = {searcher_state['elapsed_time']}")
             lines.append(f"# num_observations = {searcher_state['num_observations']}")
             lines.append(f"# num_configs = {searcher_state['num_configs']}")
-        model_params = searcher_state['model_params']
+        model_params = searcher_state["model_params"]
         lines.append(f"_model_params = '{json.dumps(model_params)}'")
-        #lines.append("model_params = json.loads(_model_params)")
-        state = searcher_state['state']
+        # lines.append("model_params = json.loads(_model_params)")
+        state = searcher_state["state"]
         lines.append(f"_state = '{json.dumps(state)}'")
-        #lines.append("state = decode_state(enc_state=json.loads(_state), hp_ranges=hp_ranges)")
-        return '\n'.join(lines)
+        # lines.append("state = decode_state(enc_state=json.loads(_state), hp_ranges=hp_ranges)")
+        return "\n".join(lines)

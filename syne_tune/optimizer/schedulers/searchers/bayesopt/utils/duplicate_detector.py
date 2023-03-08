@@ -10,28 +10,30 @@
 # on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
-from abc import ABC, abstractmethod
+from syne_tune.optimizer.schedulers.searchers.bayesopt.datatypes.common import (
+    Configuration,
+)
+from syne_tune.optimizer.schedulers.searchers.bayesopt.tuning_algorithms.common import (
+    ExclusionList,
+)
 
-from syne_tune.optimizer.schedulers.searchers.bayesopt.datatypes.common \
-    import Configuration
-from syne_tune.optimizer.schedulers.searchers.bayesopt.tuning_algorithms.common \
-    import ExclusionList
 
-
-class DuplicateDetector(ABC):
-    @abstractmethod
-    def contains(self, existing_candidates: ExclusionList,
-                 new_candidate: Configuration) -> bool:
-        pass
+class DuplicateDetector:
+    def contains(
+        self, existing_candidates: ExclusionList, new_candidate: Configuration
+    ) -> bool:
+        raise NotImplementedError
 
 
 class DuplicateDetectorNoDetection(DuplicateDetector):
-    def contains(self, existing_candidates: ExclusionList,
-                 new_candidate: Configuration) -> bool:
+    def contains(
+        self, existing_candidates: ExclusionList, new_candidate: Configuration
+    ) -> bool:
         return False  # no duplicate detection at all
 
 
 class DuplicateDetectorIdentical(DuplicateDetector):
-    def contains(self, existing_candidates: ExclusionList,
-                 new_candidate: Configuration) -> bool:
+    def contains(
+        self, existing_candidates: ExclusionList, new_candidate: Configuration
+    ) -> bool:
         return existing_candidates.contains(new_candidate)

@@ -9,10 +9,10 @@ this tutorial you will learn about the basics and some gotchas.
 ### Introduction
 
 Here is an example for a configuration space:
-```python
-from syne_tune.search_space import randint, uniform, loguniform, \
-    choice
 
+```python
+from syne_tune.config_space import randint, uniform, loguniform, \
+    choice
 
 config_space = {
     'n_units': randint(4, 1024),
@@ -44,15 +44,20 @@ means, a basic component of many HPO algorithms. The following domains are curre
 * `uniform(lower, upper)`: Real-valued uniform in `[lower, upper]`
 * `loguniform(lower, upper)`: Real-valued log-uniform in
   `[lower, upper]`. More precisely, the value is `exp(x)`, where `x` is drawn
-  uniformly in `[log(lower), log(upper)]`
+  uniformly in `[log(lower), log(upper)]`.
 * `randint(lower, upper)`: Integer uniform in `lower, ..., upper`.
   The value range includes both `lower` and `upper` (difference to Python range
-  convention)
+  convention).
 * `lograndint(lower, upper)`: Integer log-uniform in
   `lower, ..., upper`. More precisely, the value is `int(round(exp(x)))`, where
-  `x` is drawn uniformly in `[log(lower - 0.5), log(upper + 0.5)]`
-* `choice(categories)`: Uniform from the finite list `categories` of `str`
-  values
+  `x` is drawn uniformly in `[log(lower - 0.5), log(upper + 0.5)]`.
+* `choice(categories)`: Uniform from the finite list `categories` of values.
+  Entries in `categories` should ideally be of type `str`, but types `int` and
+  `float` are also allowed (the latter can lead to errors due to round-off).
+* `ordinal(categories)`: Variant of `choice` for which the order of entries in
+  `categories` matters. Essentially, we use `randint(0, len(categories) - 1)`
+  internally on the positions in `categories`. For methods like Bayesian
+  optimization, nearby elements in the list have closer encodings.
 * `finrange(lower, upper, size)`: Can be used as finite analogue of `uniform`.
   Uniform from the finite range `lower, ..., upper` of size `size`, where
   entries are equally spaced. For example, `finrange(0.5, 1.5, 3)` means
@@ -63,6 +68,12 @@ means, a basic component of many HPO algorithms. The following domains are curre
   `loguniform`. Values are `exp(x)`, where `x` is drawn uniformly from the
   finite range `log(lower), ..., log(upper)` of size `size`.  Note that both
   `lower` and `upper` are part of the value range.
+
+By default, the value type for `finrange` and `logfinrange` is `float`. It can
+be changed to `int` by the argument `cast_int=True`. For example,
+`logfinrange(8, 256, 6, cast_int=True)` results in `8, 16, 32, 64, 128, 256` and
+value type `int`, while `logfinrange(8, 256, 6)` results in
+`8.0, 16.0, 32.0, 64.0, 128.0, 256.0` and  value type `float`.
 
 
 ### Recommendations
@@ -98,6 +109,9 @@ provide some recommendations.
   insist on a finite range (in some cases, this may be the better choice) for
   a numerical parameter, make use of `finrange` or `logfinrange` instead of
   `choice`, as alternatives to `uniform` and `loguniform` respectively.
+* **Explore `ordinal` as alternative to `choice`.** Ordinal parameters are
+  encoded by a single int value, which is more economical in Bayesian
+  optimization.
 * **Use a log transform** for parameters which may vary over several orders of
   magnitude. Examples are learning rates or regularization constants.
 

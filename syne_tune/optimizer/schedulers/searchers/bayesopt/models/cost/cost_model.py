@@ -10,17 +10,17 @@
 # on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
-from abc import ABC, abstractmethod
 from typing import List
 from dataclasses import dataclass
 
-from syne_tune.optimizer.schedulers.searchers.bayesopt.datatypes.common \
-    import Configuration
-from syne_tune.optimizer.schedulers.searchers.bayesopt.datatypes.tuning_job_state \
-    import TuningJobState
+from syne_tune.optimizer.schedulers.searchers.bayesopt.datatypes.common import (
+    Configuration,
+)
+from syne_tune.optimizer.schedulers.searchers.bayesopt.datatypes.tuning_job_state import (
+    TuningJobState,
+)
 
-__all__ = ['CostValue',
-           'CostModel']
+__all__ = ["CostValue", "CostModel"]
 
 
 @dataclass
@@ -33,11 +33,12 @@ class CostValue:
     level r = 1, 2, 3, ... costs
         c(x, r) = c_0(x) + r c_1(x)
     """
+
     c0: float
     c1: float
 
 
-class CostModel(ABC):
+class CostModel:
     """
     Interface for (temporal) cost model in the context of multi-fidelity HPO.
     We assume there are configurations x and resource levels r (for example,
@@ -54,16 +55,15 @@ class CostModel(ABC):
     dataset. This inner state is then used when `sample_joint` is called.
 
     """
+
     @property
-    @abstractmethod
     def cost_metric_name(self) -> str:
         """
         :return: Name of metric in TrialEvaluations of cases in
             TuningJobState
         """
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
     def update(self, state: TuningJobState):
         """
         Update inner representation in order to be ready to return cost value
@@ -78,7 +78,7 @@ class CostModel(ABC):
 
         :param state: Current dataset (only trials_evaluations is used)
         """
-        pass
+        raise NotImplementedError
 
     def resample(self):
         """
@@ -92,7 +92,6 @@ class CostModel(ABC):
         """
         pass
 
-    @abstractmethod
     def sample_joint(self, candidates: List[Configuration]) -> List[CostValue]:
         """
         Draws cost values (c_0(x), c_1(x)) for candidates (non-extended).
@@ -109,12 +108,12 @@ class CostModel(ABC):
         :param candidates: Non-extended configs
         :return: List of (c_0(x), c_1(x))
         """
-        pass
+        raise NotImplementedError
 
     @staticmethod
     def event_time(
-            start_time: float, level: int, next_milestone: int,
-            cost: CostValue) -> float:
+        start_time: float, level: int, next_milestone: int, cost: CostValue
+    ) -> float:
         """
         If a task reported its last recent value at start_time at level level,
         return time of reaching level next_milestone, given cost cost.
@@ -132,9 +131,12 @@ class CostModel(ABC):
         return result
 
     def predict_times(
-            self, candidates: List[Configuration], resources: List[int],
-            cost_values: List[CostValue],
-            start_time: float = 0) -> List[float]:
+        self,
+        candidates: List[Configuration],
+        resources: List[int],
+        cost_values: List[CostValue],
+        start_time: float = 0,
+    ) -> List[float]:
         """
         Given configs x, resource values r and cost values from sample_joint,
         compute time predictions for when each config x reaches its resource
@@ -150,16 +152,17 @@ class CostModel(ABC):
         assert len(resources) == num_cases
         assert len(cost_values) == num_cases
         time_predictions = []
-        for candidate, resource, cost in zip(candidates, resources,
-                                             cost_values):
-            time_predictions.append(self.event_time(
-                start_time=start_time, level=0, next_milestone=resource,
-                cost=cost))
+        for candidate, resource, cost in zip(candidates, resources, cost_values):
+            time_predictions.append(
+                self.event_time(
+                    start_time=start_time, level=0, next_milestone=resource, cost=cost
+                )
+            )
         return time_predictions
 
     def _check_dataset_has_cost_metric(self, state: TuningJobState):
         assert all(
-            self.cost_metric_name in x.metrics
-            for x in state.trials_evaluations), \
-            "All labeled cases in state must have metrics[{}]".format(
-                self.cost_metric_name)
+            self.cost_metric_name in x.metrics for x in state.trials_evaluations
+        ), "All labeled cases in state must have metrics[{}]".format(
+            self.cost_metric_name
+        )

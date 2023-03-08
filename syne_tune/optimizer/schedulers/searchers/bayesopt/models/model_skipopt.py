@@ -10,33 +10,33 @@
 # on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
-from abc import ABC, abstractmethod
+from syne_tune.optimizer.schedulers.searchers.bayesopt.datatypes.tuning_job_state import (
+    TuningJobState,
+)
+from syne_tune.optimizer.schedulers.searchers.bayesopt.datatypes.common import (
+    INTERNAL_METRIC_NAME,
+)
 
-from syne_tune.optimizer.schedulers.searchers.bayesopt.datatypes.tuning_job_state \
-    import TuningJobState
-from syne_tune.optimizer.schedulers.searchers.bayesopt.datatypes.common \
-    import INTERNAL_METRIC_NAME
 
-
-class SkipOptimizationPredicate(ABC):
+class SkipOptimizationPredicate:
     """
     Interface for skip_optimization predicate in
     :class:`ModelStateTransformer`.
 
     """
+
     def reset(self):
         """
         If there is an internal state, reset it to its initial value
         """
         pass
 
-    @abstractmethod
     def __call__(self, state: TuningJobState) -> bool:
         """
         :param state: Current TuningJobState
         :return: Skip hyperparameter optimization?
         """
-        pass
+        raise NotImplementedError
 
 
 class NeverSkipPredicate(SkipOptimizationPredicate):
@@ -44,6 +44,7 @@ class NeverSkipPredicate(SkipOptimizationPredicate):
     Hyperparameter optimization is never skipped.
 
     """
+
     def __call__(self, state: TuningJobState) -> bool:
         return False
 
@@ -53,6 +54,7 @@ class AlwaysSkipPredicate(SkipOptimizationPredicate):
     Hyperparameter optimization is always skipped.
 
     """
+
     def __call__(self, state: TuningJobState) -> bool:
         return True
 
@@ -66,9 +68,10 @@ class SkipPeriodicallyPredicate(SkipOptimizationPredicate):
     period times, in between they are skipped.
 
     """
+
     def __init__(
-            self, init_length: int, period: int,
-            metric_name: str = INTERNAL_METRIC_NAME):
+        self, init_length: int, period: int, metric_name: str = INTERNAL_METRIC_NAME
+    ):
         assert init_length >= 0
         assert period > 1
         self.init_length = init_length
@@ -88,13 +91,13 @@ class SkipPeriodicallyPredicate(SkipOptimizationPredicate):
         if num_labeled == self._last_size:
             return self._last_retval
         if self._last_size is not None:
-            assert num_labeled > self._last_size, \
-                "num_labeled = {} < {} = _last_size".format(
-                    num_labeled, self._last_size)
+            assert (
+                num_labeled > self._last_size
+            ), "num_labeled = {} < {} = _last_size".format(num_labeled, self._last_size)
         if num_labeled < self.init_length:
             ret_value = False
         else:
-            ret_value = (self._counter % self.period != 0)
+            ret_value = self._counter % self.period != 0
             self._counter += 1
         self._last_size = num_labeled
         self._last_size = ret_value
@@ -115,9 +118,13 @@ class SkipNoMaxResourcePredicate(SkipOptimizationPredicate):
     resources than max_resource, this does not trigger HP optimization.
 
     """
+
     def __init__(
-            self, init_length: int, max_resource: int,
-            metric_name: str = INTERNAL_METRIC_NAME):
+        self,
+        init_length: int,
+        max_resource: int,
+        metric_name: str = INTERNAL_METRIC_NAME,
+    ):
         assert init_length >= 0
         self.init_length = init_length
         self.metric_name = metric_name
@@ -128,19 +135,19 @@ class SkipNoMaxResourcePredicate(SkipOptimizationPredicate):
         self.lastrec_max_resource_cases = None
 
     def _num_max_resource_cases(self, state: TuningJobState):
-
         def is_max_resource(metrics: dict) -> int:
             return int(self.max_resource in metrics[self.metric_name])
 
-        return sum(is_max_resource(ev.metrics)
-                   for ev in state.trials_evaluations)
+        return sum(is_max_resource(ev.metrics) for ev in state.trials_evaluations)
 
     def __call__(self, state: TuningJobState) -> bool:
         if state.num_observed_cases(self.metric_name) < self.init_length:
             return False
         num_max_resource_cases = self._num_max_resource_cases(state)
-        if self.lastrec_max_resource_cases is None or \
-                num_max_resource_cases > self.lastrec_max_resource_cases:
+        if (
+            self.lastrec_max_resource_cases is None
+            or num_max_resource_cases > self.lastrec_max_resource_cases
+        ):
             self.lastrec_max_resource_cases = num_max_resource_cases
             return False
         else:
